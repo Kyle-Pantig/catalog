@@ -12,4 +12,6 @@ dist/
 build/
 .env
 .DS_Store
+# Prisma binary (needed for deployment)
+!prisma-query-engine-debian-openssl-3.0.x
 

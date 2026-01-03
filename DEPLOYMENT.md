@@ -35,7 +35,102 @@ Click "Deploy" and Vercel will build and deploy your frontend.
 
 ---
 
-## Backend Deployment (Railway)
+## Backend Deployment (Render.com)
+
+### Step 1: Connect Repository
+1. Go to [Render.com](https://render.com) and sign in
+2. Click "New +" → "Web Service"
+3. Connect your GitHub repository: `Kyle-Pantig/catalog`
+
+### Step 2: Configure Service Settings
+- **Name**: `catalog-backend` (or your preferred name)
+- **Root Directory**: `backend`
+- **Environment**: `Python 3`
+- **Build Command** (Try these in order until one works):
+
+  **Option 1 (Recommended):**
+  ```bash
+  cd backend && pip install -r requirements.txt && python -m prisma py fetch && python -m prisma generate
+  ```
+
+  **Option 2:**
+  ```bash
+  cd backend && pip install -r requirements.txt && prisma py fetch && prisma generate
+  ```
+
+  **Option 3 (Using build script):**
+  ```bash
+  chmod +x backend/render-build.sh && backend/render-build.sh
+  ```
+
+  **Option 4 (If Node.js is available):**
+  ```bash
+  cd backend && pip install -r requirements.txt && npm install -g @prisma/cli && prisma generate && python -m prisma generate
+  ```
+
+  **Important Notes:** 
+  - The `prisma py fetch` command downloads the Prisma query engine binary
+  - This MUST run before or during `prisma generate`
+  - If you get "command not found" errors, try `python -m prisma` instead of just `prisma`
+  - Make sure you're in the `backend` directory when running these commands
+- **Start Command**: 
+  ```bash
+  uvicorn main:app --host 0.0.0.0 --port $PORT
+  ```
+
+**Important:** Make sure to set the **Root Directory** to `backend` in Render's settings!
+
+### Step 3: Add PostgreSQL Database
+1. In Render, click "New +" → "PostgreSQL"
+2. Create a new PostgreSQL database
+3. Copy the **Internal Database URL** (for Render services) or **External Database URL** (if needed)
+4. This will be your `DATABASE_URL` environment variable
+
+### Step 4: Environment Variables
+Add these environment variables in Render (Environment → Environment Variables):
+
+```
+DATABASE_URL=your_postgresql_connection_string
+JWT_SECRET=your_jwt_secret_key
+SUPABASE_URL=your_supabase_url
+SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
+SUPABASE_STORAGE_BUCKET=your_bucket_name
+CORS_ORIGINS=https://your-vercel-app.vercel.app,http://localhost:3000
+```
+
+**Note:** 
+- Replace `your-vercel-app.vercel.app` with your actual Vercel frontend URL
+- You can add multiple origins separated by commas
+- Generate a secure `JWT_SECRET` (random string)
+- Get Supabase credentials from your Supabase project
+
+### Step 5: Run Database Migrations
+After the first deployment, you need to run Prisma migrations:
+
+**Option 1: Using Render Shell**
+1. Go to your service → Shell
+2. Run:
+   ```bash
+   cd backend
+   prisma migrate deploy
+   ```
+
+**Option 2: Add to Build Command** (for automatic migrations)
+Update your Build Command to:
+```bash
+pip install -r requirements.txt && prisma generate && prisma py fetch && prisma migrate deploy
+```
+
+**Note:** This will run migrations on every deploy. For production, you might want to run migrations manually.
+
+### Step 6: Deploy
+Click "Create Web Service" and Render will deploy your backend.
+
+Your backend will be available at: `https://your-service-name.onrender.com`
+
+---
+
+## Backend Deployment (Railway) - Alternative
 
 ### Step 1: Connect Repository
 1. Go to [Railway](https://railway.app) and sign in
@@ -114,7 +209,7 @@ Your backend will be available at: `https://your-service-name.up.railway.app`
 - [ ] Test catalog creation
 - [ ] Test share code generation and viewing
 
-### Backend (Railway)
+### Backend (Render.com)
 - [ ] Verify all environment variables are set
 - [ ] Check database connection (DATABASE_URL is auto-set by Railway)
 - [ ] Verify Prisma migrations ran successfully
@@ -135,7 +230,7 @@ The backend will automatically allow requests from all origins listed in this va
 ## URLs After Deployment
 
 - **Frontend**: `https://your-app.vercel.app`
-- **Backend**: `https://your-service-name.up.railway.app`
+- **Backend**: `https://your-service-name.onrender.com` (Render) or `https://your-service-name.up.railway.app` (Railway)
 
 Update the frontend's `NEXT_PUBLIC_API_URL` to match your Railway backend URL.
 
@@ -148,7 +243,17 @@ Update the frontend's `NEXT_PUBLIC_API_URL` to match your Railway backend URL.
 - **API calls fail**: Verify `NEXT_PUBLIC_API_URL` is correct
 - **Environment variables not working**: Ensure they start with `NEXT_PUBLIC_` for client-side access
 
-### Backend Issues
+### Backend Issues (Render.com)
+- **Prisma binary not found**: Make sure Build Command includes `prisma py fetch`
+  - Build Command should be: `pip install -r requirements.txt && prisma generate && prisma py fetch`
+- **Database connection fails**: Verify `DATABASE_URL` is correct (use Internal Database URL for Render services)
+- **Prisma errors**: 
+  - Run `prisma generate && prisma py fetch` in build command
+  - Run `prisma migrate deploy` via Render Shell after first deployment
+- **CORS errors**: Update `CORS_ORIGINS` environment variable to include your Vercel domain
+- **Port binding errors**: Make sure Start Command uses `$PORT` variable: `uvicorn main:app --host 0.0.0.0 --port $PORT`
+
+### Backend Issues (Railway)
 - **Database connection fails**: Railway automatically sets `DATABASE_URL`, but verify it's connected
 - **Prisma errors**: 
   - Run `prisma generate` (already in Dockerfile)

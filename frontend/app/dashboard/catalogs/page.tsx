@@ -23,11 +23,11 @@ import {
 } from '@/components/ui/popover'
 import { DeleteConfirmDialog } from '@/components/delete-confirm-dialog'
 import { DashboardHeader } from '@/components/dashboard-header'
-import { formatPrice } from '@/lib/utils'
 import Image from 'next/image'
 import { catalogApi } from '@/lib/api'
 import { toast } from 'sonner'
 import Link from 'next/link'
+import { supabase } from '@/lib/supabase'
 
 type ViewMode = 'list' | 'board'
 
@@ -46,10 +46,13 @@ export default function CatalogsPage() {
   const [deletingCatalog, setDeletingCatalog] = useState<any>(null)
 
   useEffect(() => {
-    const token = localStorage.getItem('access_token')
-    if (!token) {
-      router.push('/login')
+    const checkAuth = async () => {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) {
+        router.push('/login')
+      }
     }
+    checkAuth()
   }, [router])
 
   const { data: catalogs, isLoading } = useQuery({
@@ -166,12 +169,12 @@ export default function CatalogsPage() {
                 Create New Catalog
               </Button>
             </SheetTrigger>
-            <SheetContent side="right">
+            <SheetContent side="right" className="flex flex-col">
               <SheetHeader>
                 <SheetTitle>Create Catalog</SheetTitle>
                 <SheetDescription>Add a new product catalog</SheetDescription>
               </SheetHeader>
-              <div className="space-y-4 py-4">
+              <div className="flex-1 overflow-y-auto space-y-4 py-4">
                 <div className="space-y-2">
                   <label htmlFor="catalog-title" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
                     Title
@@ -205,7 +208,7 @@ export default function CatalogsPage() {
                   />
                 </div>
               </div>
-              <SheetFooter>
+              <SheetFooter className="border-t pt-4 mt-4">
                 <Button
                   variant="outline"
                   onClick={() => {
@@ -229,12 +232,12 @@ export default function CatalogsPage() {
 
           {/* Edit Catalog Sheet */}
           <Sheet open={editOpen} onOpenChange={setEditOpen}>
-            <SheetContent side="right">
+            <SheetContent side="right" className="flex flex-col">
               <SheetHeader>
                 <SheetTitle>Edit Catalog</SheetTitle>
                 <SheetDescription>Update your catalog information</SheetDescription>
               </SheetHeader>
-              <div className="space-y-4 py-4">
+              <div className="flex-1 overflow-y-auto space-y-4 py-4">
                 <div className="space-y-2">
                   <label htmlFor="edit-catalog-title" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
                     Title
@@ -268,7 +271,7 @@ export default function CatalogsPage() {
                   />
                 </div>
               </div>
-              <SheetFooter>
+              <SheetFooter className="border-t pt-4 mt-4">
                 <Button
                   variant="outline"
                   onClick={() => {
@@ -283,7 +286,11 @@ export default function CatalogsPage() {
                 </Button>
                 <Button
                   onClick={() => updateMutation.mutate({ id: editingCatalog?.id, title: editTitle, description: editDescription })}
-                  disabled={!editTitle || updateMutation.isPending}
+                  disabled={
+                    !editTitle || 
+                    updateMutation.isPending || 
+                    (editTitle === editingCatalog?.title && editDescription === (editingCatalog?.description || ''))
+                  }
                 >
                   {updateMutation.isPending ? 'Updating...' : 'Update'}
                 </Button>
@@ -674,9 +681,6 @@ function ItemsPopover({ items, catalogId, children }: { items: any[]; catalogId:
                       )}
                       <div className="flex-1 min-w-0">
                         <p className="font-medium text-sm truncate">{item.name}</p>
-                        {item.price && (
-                          <p className="text-xs text-muted-foreground mt-1">₱{formatPrice(item.price)}</p>
-                        )}
                       </div>
                     </div>
                   </Link>

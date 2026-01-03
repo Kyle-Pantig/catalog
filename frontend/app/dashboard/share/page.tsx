@@ -14,16 +14,20 @@ import { catalogApi, shareApi } from '@/lib/api'
 import { useCountdown } from '@/lib/use-countdown'
 import { toast } from 'sonner'
 import Link from 'next/link'
+import { supabase } from '@/lib/supabase'
 
 export default function SharePage() {
   const router = useRouter()
   const queryClient = useQueryClient()
 
   useEffect(() => {
-    const token = localStorage.getItem('access_token')
-    if (!token) {
-      router.push('/login')
+    const checkAuth = async () => {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) {
+        router.push('/login')
+      }
     }
+    checkAuth()
   }, [router])
 
   const { data: catalogs, isLoading } = useQuery({
@@ -126,7 +130,9 @@ export default function SharePage() {
                 <CardHeader>
                   <div className="flex justify-between items-start">
                     <div>
-                      <CardTitle>{catalog.title}</CardTitle>
+                      <Link href={`/dashboard/catalogs/${catalog.id}`} className="hover:underline">
+                        <CardTitle className="cursor-pointer">{catalog.title}</CardTitle>
+                      </Link>
                       <CardDescription>{catalog.description || 'No description'}</CardDescription>
                       <div className="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
                         <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">

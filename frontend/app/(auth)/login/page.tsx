@@ -6,7 +6,6 @@ import Image from 'next/image'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { authApi } from '@/lib/api'
 import { supabase } from '@/lib/supabase'
 import { toast } from 'sonner'
 
@@ -20,24 +19,19 @@ export default function LoginPage() {
     e.preventDefault()
     setLoading(true)
 
-    const { data, error } = await authApi.login(email, password)
+    // Use Supabase directly for proper session management
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    })
 
     if (error) {
-      toast.error(error.detail || 'Login failed')
+      toast.error(error.message || 'Login failed')
       setLoading(false)
       return
     }
 
-    if (data) {
-      localStorage.setItem('access_token', data.access_token)
-      localStorage.setItem('user', JSON.stringify(data.user))
-      
-      // Set Supabase session for storage access
-      await supabase.auth.setSession({
-        access_token: data.access_token,
-        refresh_token: '' // Backend doesn't return refresh token, but that's okay for storage
-      })
-      
+    if (data.session) {
       toast.success('Login successful!')
       router.push('/dashboard')
     }
@@ -82,6 +76,7 @@ export default function LoginPage() {
                 placeholder="••••••••"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                autoComplete="off"
                 required
               />
             </div>

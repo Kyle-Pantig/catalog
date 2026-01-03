@@ -1,3 +1,5 @@
+import { supabase } from './supabase'
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
 export interface ApiError {
@@ -9,9 +11,9 @@ export async function apiRequest<T>(
   options: RequestInit = {}
 ): Promise<{ data: T | null; error: ApiError | null }> {
   try {
-    const token = typeof window !== 'undefined' 
-      ? localStorage.getItem('access_token') 
-      : null
+    // Get token from Supabase session (handles refresh automatically)
+    const { data: { session } } = await supabase.auth.getSession()
+    const token = session?.access_token
 
     const response = await fetch(`${API_URL}${endpoint}`, {
       ...options,
@@ -24,6 +26,16 @@ export async function apiRequest<T>(
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({ detail: response.statusText }))
+      
+      // Handle 401 Unauthorized - sign out and redirect to login
+      if (response.status === 401 && typeof window !== 'undefined') {
+        await supabase.auth.signOut()
+        // Only redirect if not already on login page
+        if (!window.location.pathname.includes('/login')) {
+          window.location.href = '/login'
+        }
+      }
+      
       return { data: null, error: error as ApiError }
     }
 
@@ -80,13 +92,13 @@ export const catalogApi = {
       method: 'DELETE',
     })
   },
-  addItem: async (catalogId: string, item: { name: string; images?: string[]; price?: number }) => {
+  addItem: async (catalogId: string, item: { name: string; description?: string; images?: string[]; specifications?: { label: string; value: string }[]; variants?: { name: string; options: { value: string; specifications?: { label: string; value: string }[] }[] }[] }) => {
     return apiRequest(`/catalog/${catalogId}/items`, {
       method: 'POST',
       body: JSON.stringify(item),
     })
   },
-  updateItem: async (catalogId: string, itemId: string, item: { name?: string; images?: string[]; price?: number }) => {
+  updateItem: async (catalogId: string, itemId: string, item: { name?: string; description?: string; images?: string[]; specifications?: { label: string; value: string }[]; variants?: { name: string; options: { value: string; specifications?: { label: string; value: string }[] }[] }[] }) => {
     return apiRequest(`/catalog/${catalogId}/items/${itemId}`, {
       method: 'PUT',
       body: JSON.stringify(item),

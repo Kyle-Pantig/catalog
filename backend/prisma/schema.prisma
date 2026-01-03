@@ -22,13 +22,14 @@ model Catalog {
 }
 
 model Item {
-  id          String      @id @default(uuid())
-  catalogId   String
-  catalog     Catalog     @relation(fields: [catalogId], references: [id], onDelete: Cascade)
-  name        String
-  price       Float?
-  images      ItemImage[]
-  createdAt   DateTime    @default(now())
+  id             String      @id @default(uuid())
+  catalogId      String
+  catalog        Catalog     @relation(fields: [catalogId], references: [id], onDelete: Cascade)
+  name           Strin  description    String?
+  specifications Json?       // Custom specs like [{label: "Length", value: "10cm"}]
+  variants       Json?       // Variants like [{name: "Size", options: ["S", "M", "L"]}, {name: "Color", options: ["Red", "Blue"]}]
+  images         ItemImage[]
+  createdAt      DateTime    @default(now())
 }
 
 model ItemImage {

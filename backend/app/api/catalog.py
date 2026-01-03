@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from datetime import datetime, timedelta
+from prisma import Json
 from app.core.database import prisma
 from app.core.security import get_current_user
 from app.models.schemas import CatalogCreate, CatalogUpdate, CatalogResponse, CatalogWithItems, ItemCreate, ItemUpdate, ItemResponse, ReorderImagesRequest
@@ -138,12 +139,36 @@ async def create_item(
         if catalog.ownerId != current_user["id"]:
             raise HTTPException(status_code=403, detail="Not authorized to add items to this catalog")
         
+        # Prepare specifications as JSON if provided
+        specs_json = None
+        if item.specifications:
+            specs = [{"label": spec.label, "value": spec.value} for spec in item.specifications]
+            if specs:
+                specs_json = Json(specs)
+        
+        # Prepare variants as JSON if provided
+        variants_json = None
+        if item.variants:
+            vars_data = []
+            for var in item.variants:
+                options_data = []
+                for opt in var.options:
+                    opt_dict = {"value": opt.value}
+                    if opt.specifications:
+                        opt_dict["specifications"] = [{"label": s.label, "value": s.value} for s in opt.specifications]
+                    options_data.append(opt_dict)
+                vars_data.append({"name": var.name, "options": options_data})
+            if vars_data:
+                variants_json = Json(vars_data)
+        
         # Create item
         new_item = await prisma.item.create(
             data={
             "catalogId": catalog_id,
             "name": item.name,
-            "price": item.price
+            "description": item.description if item.description else None,
+            "specifications": specs_json,
+            "variants": variants_json
             },
             include={"images": True}
         )
@@ -199,8 +224,24 @@ async def update_item(
         update_data = {}
         if item_update.name is not None:
             update_data["name"] = item_update.name
-        if item_update.price is not None:
-            update_data["price"] = item_update.price
+        if item_update.description is not None:
+            update_data["description"] = item_update.description if item_update.description else None
+        if item_update.specifications is not None:
+            # Convert to JSON - use Json wrapper for Prisma
+            specs = [{"label": spec.label, "value": spec.value} for spec in item_update.specifications]
+            update_data["specifications"] = Json(specs) if specs else Json(None)
+        if item_update.variants is not None:
+            # Convert to JSON - use Json wrapper for Prisma
+            vars_data = []
+            for var in item_update.variants:
+                options_data = []
+                for opt in var.options:
+                    opt_dict = {"value": opt.value}
+                    if opt.specifications:
+                        opt_dict["specifications"] = [{"label": s.label, "value": s.value} for s in opt.specifications]
+                    options_data.append(opt_dict)
+                vars_data.append({"name": var.name, "options": options_data})
+            update_data["variants"] = Json(vars_data) if vars_data else Json(None)
         
         # Update item if there are changes
         if update_data:

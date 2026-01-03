@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 
@@ -51,25 +51,49 @@ class ReorderImagesRequest(BaseModel):
     images: List[ImageOrderItem]
 
 
+# Specification Schema
+class SpecificationItem(BaseModel):
+    label: str
+    value: str
+
+
+# Variant Option Schema - each option can have its own specifications
+class VariantOptionItem(BaseModel):
+    value: str  # e.g. "S", "M", "L" or "Red", "Blue"
+    specifications: Optional[List[SpecificationItem]] = None  # Specs specific to this option
+
+
+# Variant Schema
+class VariantItem(BaseModel):
+    name: str  # e.g. "Size", "Color", "Material"
+    options: List[VariantOptionItem]  # Each option can have its own specs
+
+
 # Item Schemas
 class ItemCreate(BaseModel):
     name: str
+    description: Optional[str] = None
     images: Optional[List[str]] = None  # List of image URLs
-    price: Optional[float] = None
+    specifications: Optional[List[SpecificationItem]] = None  # Custom specs like [{label: "Length", value: "10cm"}]
+    variants: Optional[List[VariantItem]] = None  # Variants like [{name: "Size", options: ["S", "M", "L"]}]
 
 
 class ItemUpdate(BaseModel):
     name: Optional[str] = None
+    description: Optional[str] = None
     images: Optional[List[str]] = None  # List of image URLs to replace existing
-    price: Optional[float] = None
+    specifications: Optional[List[SpecificationItem]] = None
+    variants: Optional[List[VariantItem]] = None
 
 
 class ItemResponse(BaseModel):
     id: str
     catalogId: str
     name: str
+    description: Optional[str]
     images: List[ItemImageResponse]
-    price: Optional[float]
+    specifications: Optional[List[Dict[str, Any]]]
+    variants: Optional[List[Dict[str, Any]]]
     createdAt: datetime
     
     class Config:

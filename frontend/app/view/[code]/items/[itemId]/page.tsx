@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import { PhotoProvider, PhotoView } from 'react-photo-view'
 import 'react-photo-view/dist/react-photo-view.css'
@@ -9,7 +9,6 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { catalogApi } from '@/lib/api'
-import { formatPrice } from '@/lib/utils'
 import { toast } from 'sonner'
 import Link from 'next/link'
 import Image from 'next/image'
@@ -17,6 +16,7 @@ import Image from 'next/image'
 export default function ViewItemDetailPage() {
   const params = useParams()
   const router = useRouter()
+  const searchParams = useSearchParams()
   const code = params.code as string
   const itemId = params.itemId as string
 
@@ -26,6 +26,27 @@ export default function ViewItemDetailPage() {
   const [catalog, setCatalog] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [copied, setCopied] = useState(false)
+  const [selectedVariants, setSelectedVariants] = useState<Record<string, string>>({})
+
+  // Update URL when variant selection changes
+  const updateVariantUrl = useCallback((newSelections: Record<string, string>) => {
+    const params = new URLSearchParams()
+    Object.entries(newSelections).forEach(([key, value]) => {
+      params.set(key, value)
+    })
+    const queryString = params.toString()
+    const newUrl = queryString 
+      ? `/view/${code}/items/${itemId}?${queryString}`
+      : `/view/${code}/items/${itemId}`
+    router.replace(newUrl, { scroll: false })
+  }, [code, itemId, router])
+
+  // Handle variant selection (user interaction)
+  const handleVariantSelect = useCallback((variantName: string, optionValue: string) => {
+    const newSelections = { ...selectedVariants, [variantName]: optionValue }
+    setSelectedVariants(newSelections)
+    updateVariantUrl(newSelections)
+  }, [selectedVariants, updateVariantUrl])
 
   useEffect(() => {
     if (code) {
@@ -54,6 +75,49 @@ export default function ViewItemDetailPage() {
   const item = catalog?.items?.find((i: any) => i.id === itemId)
 
   const totalImages = item?.images?.length || 0
+
+  // Auto-select variant options on load (from URL params or default to first)
+  useEffect(() => {
+    if (item?.variants && item.variants.length > 0 && Object.keys(selectedVariants).length === 0) {
+      const defaultSelections: Record<string, string> = {}
+      let hasUrlParams = false
+      
+      item.variants.forEach((variant: { name: string; options: any[] }) => {
+        // Check URL params first
+        const urlValue = searchParams.get(variant.name)
+        if (urlValue) {
+          // Validate that the URL value exists in options
+          const validOption = variant.options.find((o: any) => 
+            (typeof o === 'string' ? o : o.value) === urlValue
+          )
+          if (validOption) {
+            defaultSelections[variant.name] = urlValue
+            hasUrlParams = true
+            return
+          }
+        }
+        // Fall back to first option
+        if (variant.options.length > 0) {
+          const firstOption = variant.options[0]
+          defaultSelections[variant.name] = typeof firstOption === 'string' ? firstOption : firstOption.value
+        }
+      })
+      setSelectedVariants(defaultSelections)
+      
+      // Update URL only if no params were in URL (after a small delay to avoid render cycle)
+      if (!hasUrlParams && Object.keys(defaultSelections).length > 0) {
+        setTimeout(() => {
+          updateVariantUrl(defaultSelections)
+        }, 0)
+      }
+    }
+  }, [item?.variants, searchParams, updateVariantUrl])
+
+  // Check if item has variants and if all variants are selected
+  const hasVariants = item?.variants && item.variants.length > 0
+  const allVariantsSelected = hasVariants 
+    ? item.variants.every((v: { name: string }) => selectedVariants[v.name])
+    : true
 
   // Slide variants for animation
   const slideVariants = {
@@ -100,23 +164,33 @@ export default function ViewItemDetailPage() {
     setSelectedImageIndex(index)
   }, [selectedImageIndex, page])
 
-  // Copy product link
+  // Copy product link with selected variants
   const handleCopyLink = useCallback(async () => {
     try {
       if (!catalog) {
         toast.error('Catalog not loaded')
         return
       }
-      const productUrl = `${window.location.origin}/dashboard/catalogs/${catalog.id}/items/${itemId}`
+      
+      // Build the dashboard URL with catalog ID and variant query parameters
+      let productUrl = `${window.location.origin}/dashboard/catalogs/${catalog.id}/items/${itemId}`
+      if (hasVariants && Object.keys(selectedVariants).length > 0) {
+        const queryString = Object.entries(selectedVariants)
+          .map(([name, value]) => `${encodeURIComponent(name)}=${encodeURIComponent(value)}`)
+          .join('&')
+        productUrl += `?${queryString}`
+      }
+      
       await navigator.clipboard.writeText(productUrl)
       setCopied(true)
+      toast.success('Product link copied!')
       setTimeout(() => {
         setCopied(false)
       }, 2000)
     } catch (error) {
       toast.error('Failed to copy link')
     }
-  }, [catalog, itemId])
+  }, [catalog, itemId, hasVariants, selectedVariants])
 
   // Get images from item
   const images = item?.images || []
@@ -210,22 +284,29 @@ export default function ViewItemDetailPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-background to-muted/20">
+      {/* Sticky Breadcrumb */}
+      <div className="sticky top-0 z-50 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b">
+        <div className="p-4 md:px-8">
+          <div className="max-w-7xl mx-auto">
+            <nav className="flex items-center gap-2 text-sm">
+              <Link 
+                href={`/view/${code}`}
+                className="text-muted-foreground hover:text-foreground transition-colors"
+              >
+                {catalog.title}
+              </Link>
+              <svg className="w-4 h-4 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
+              <span className="text-foreground font-medium truncate max-w-[200px]">{item.name}</span>
+            </nav>
+          </div>
+        </div>
+      </div>
+
       {/* Main scrollable content */}
       <div className="p-4 pb-8 md:p-8">
         <div className="max-w-7xl mx-auto space-y-6 md:space-y-8">
-          {/* Breadcrumb */}
-          <nav className="flex items-center gap-2 text-sm">
-            <Link 
-              href={`/view/${code}`}
-              className="text-muted-foreground hover:text-foreground transition-colors"
-            >
-              {catalog.title}
-            </Link>
-            <svg className="w-4 h-4 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-            </svg>
-            <span className="text-foreground font-medium truncate max-w-[200px]">{item.name}</span>
-          </nav>
 
           {/* Main Content */}
           <div className="grid lg:grid-cols-2 gap-6 lg:gap-12">
@@ -371,14 +452,118 @@ export default function ViewItemDetailPage() {
                   <h1 className="text-3xl md:text-4xl lg:text-5xl font-bold tracking-tight">{item.name}</h1>
                 </div>
 
-                {/* Price */}
-                {item.price ? (
-                  <div className="inline-flex items-baseline gap-1">
-                    <span className="text-2xl md:text-3xl lg:text-4xl font-semibold text-muted-foreground">₱{formatPrice(item.price)}</span>
+                {/* Description */}
+                {item.description && (
+                  <div className="pt-4">
+                    <h3 className="text-sm font-medium text-muted-foreground mb-2">Description</h3>
+                    <p className="text-foreground whitespace-pre-wrap">{item.description}</p>
                   </div>
-                ) : (
-                  <div className="inline-flex items-center gap-2 px-4 py-2 bg-muted rounded-full">
-                    <span className="text-muted-foreground">No price set</span>
+                )}
+
+                {/* Specifications */}
+                {item.specifications && item.specifications.length > 0 && (
+                  <div className="pt-4">
+                    <h3 className="text-sm font-medium text-muted-foreground mb-3">Specifications</h3>
+                    <div className="grid gap-2">
+                      {item.specifications.map((spec: { label: string; value: string }, index: number) => (
+                        <div key={index} className="flex items-center justify-between py-2 px-3 bg-muted/50 rounded-lg">
+                          <span className="text-sm text-muted-foreground">{spec.label}</span>
+                          <span className="text-sm font-medium">{spec.value}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Variants with dynamic specifications */}
+                {item.variants && item.variants.length > 0 && (
+                  <div className="pt-4 space-y-4">
+                    <h3 className="text-sm font-medium text-muted-foreground">Select Options</h3>
+                    <div className="space-y-4">
+                      {item.variants.map((variant: { name: string; options: any[] }, index: number) => (
+                        <div key={index}>
+                          <p className="text-sm font-medium mb-2">
+                            {variant.name}
+                            {selectedVariants[variant.name] && (
+                              <span className="ml-2 text-primary">: {selectedVariants[variant.name]}</span>
+                            )}
+                          </p>
+                          <div className="flex flex-wrap gap-2">
+                            {variant.options.map((option: any, optIndex: number) => {
+                              const optionValue = typeof option === 'string' ? option : option.value
+                              return (
+                                <button
+                                  key={optIndex}
+                                  onClick={() => handleVariantSelect(variant.name, optionValue)}
+                                  className={`px-3 py-1.5 text-sm rounded-full border transition-all ${
+                                    selectedVariants[variant.name] === optionValue
+                                      ? 'bg-primary text-primary-foreground border-primary'
+                                      : 'bg-muted hover:bg-muted/80 border-border hover:border-primary/50'
+                                  }`}
+                                >
+                                  {optionValue}
+                                </button>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Dynamic Specifications based on selected variants */}
+                    {(() => {
+                      // Collect all specs from selected variant options
+                      const allSelectedSpecs: { label: string; value: string }[] = []
+                      item.variants.forEach((variant: { name: string; options: any[] }) => {
+                        const selectedValue = selectedVariants[variant.name]
+                        if (selectedValue) {
+                          const selectedOption = variant.options.find((o: any) => 
+                            (typeof o === 'string' ? o : o.value) === selectedValue
+                          )
+                          if (selectedOption && typeof selectedOption === 'object' && selectedOption.specifications) {
+                            allSelectedSpecs.push(...selectedOption.specifications)
+                          }
+                        }
+                      })
+                      
+                      if (allSelectedSpecs.length > 0) {
+                        return (
+                          <div className="pt-4 border-t">
+                            <h3 className="text-sm font-medium text-muted-foreground mb-3">Specifications</h3>
+                            <div className="grid gap-2">
+                              {allSelectedSpecs.map((spec, index) => (
+                                <div key={index} className="flex items-center justify-between py-2 px-3 bg-muted/50 rounded-lg">
+                                  <span className="text-sm text-muted-foreground">{spec.label}</span>
+                                  <span className="text-sm font-medium">{spec.value}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )
+                      }
+                      
+                      // Show hint to select options
+                      const hasAnySpecs = item.variants.some((v: any) => 
+                        v.options.some((o: any) => typeof o === 'object' && o.specifications && o.specifications.length > 0)
+                      )
+                      if (hasAnySpecs && Object.keys(selectedVariants).length === 0) {
+                        return (
+                          <p className="text-xs text-muted-foreground pt-2">
+                            Select an option above to view specifications
+                          </p>
+                        )
+                      }
+                      return null
+                    })()}
+
+                    {!allVariantsSelected && (
+                      <p className="text-xs text-amber-600 mt-3 flex items-center gap-1">
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                        </svg>
+                        Please select all options before copying the product link
+                      </p>
+                    )}
                   </div>
                 )}
 
@@ -428,13 +613,21 @@ export default function ViewItemDetailPage() {
                     className="w-full"
                     size="lg"
                     variant={copied ? "default" : "outline"}
+                    disabled={hasVariants && !allVariantsSelected}
                   >
                     {copied ? (
                       <>
                         <svg className="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                         </svg>
-                        Copied
+                        Copied!
+                      </>
+                    ) : hasVariants && !allVariantsSelected ? (
+                      <>
+                        <svg className="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                        </svg>
+                        Select Options First
                       </>
                     ) : (
                       <>

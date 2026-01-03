@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useRef, useMemo, useCallback } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import { PhotoProvider, PhotoView } from 'react-photo-view'
@@ -13,16 +13,17 @@ import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetT
 import { DeleteConfirmDialog } from '@/components/delete-confirm-dialog'
 import { SortableImageGrid, ImageItem } from '@/components/sortable-image-grid'
 import { catalogApi } from '@/lib/api'
-import { formatPrice } from '@/lib/utils'
 import { uploadMultipleImages, validateMultipleFiles } from '@/lib/storage'
 import { toast } from 'sonner'
 import Link from 'next/link'
 import Image from 'next/image'
 import { Skeleton } from '@/components/ui/skeleton'
+import { supabase } from '@/lib/supabase'
 
 export default function ItemDetailPage() {
   const params = useParams()
   const router = useRouter()
+  const searchParams = useSearchParams()
   const queryClient = useQueryClient()
   const catalogId = params.id as string
   const itemId = params.itemId as string
@@ -31,19 +32,48 @@ export default function ItemDetailPage() {
   const [selectedImageIndex, setSelectedImageIndex] = useState(0)
   const [[page, direction], setPage] = useState([0, 0])
 
+  // Variant selection state (for display)
+  const [selectedVariants, setSelectedVariants] = useState<Record<string, string>>({})
+  const [isInitialLoad, setIsInitialLoad] = useState(true)
+
+  // Update URL when variant selection changes
+  const updateVariantUrl = useCallback((newSelections: Record<string, string>) => {
+    const params = new URLSearchParams()
+    Object.entries(newSelections).forEach(([key, value]) => {
+      params.set(key, value)
+    })
+    const queryString = params.toString()
+    const newUrl = queryString 
+      ? `/dashboard/catalogs/${catalogId}/items/${itemId}?${queryString}`
+      : `/dashboard/catalogs/${catalogId}/items/${itemId}`
+    router.replace(newUrl, { scroll: false })
+  }, [catalogId, itemId, router])
+
+  // Handle variant selection (user interaction)
+  const handleVariantSelect = useCallback((variantName: string, optionValue: string) => {
+    setIsInitialLoad(false)
+    const newSelections = { ...selectedVariants, [variantName]: optionValue }
+    setSelectedVariants(newSelections)
+    updateVariantUrl(newSelections)
+  }, [selectedVariants, updateVariantUrl])
+
   // Edit Item state
   const [editOpen, setEditOpen] = useState(false)
   const [editName, setEditName] = useState('')
-  const [editPrice, setEditPrice] = useState('')
+  const [editDescription, setEditDescription] = useState('')
   const [editImages, setEditImages] = useState<ImageItem[]>([])
+  const [editSpecifications, setEditSpecifications] = useState<{ label: string; value: string }[]>([])
+  const [editVariants, setEditVariants] = useState<{ name: string; options: { value: string; specifications: { label: string; value: string }[] }[] }[]>([])
   const [editUploading, setEditUploading] = useState(false)
   const editFileInputRef = useRef<HTMLInputElement>(null)
 
   // Initial state for change detection
   const [initialEditState, setInitialEditState] = useState<{
     name: string
-    price: string
+    description: string
     imageIds: string[]
+    specifications: string
+    variants: string
   } | null>(null)
 
   // Manage Images state
@@ -61,8 +91,16 @@ export default function ItemDetailPage() {
     // Check name change
     if (editName !== initialEditState.name) return true
     
-    // Check price change
-    if (editPrice !== initialEditState.price) return true
+    // Check description change
+    if (editDescription !== initialEditState.description) return true
+    
+    // Check specifications change
+    const currentSpecs = JSON.stringify(editSpecifications.filter(s => s.label.trim() || s.value.trim()))
+    if (currentSpecs !== initialEditState.specifications) return true
+    
+    // Check variants change
+    const currentVariants = JSON.stringify(editVariants.filter(v => v.name.trim() && v.options.some(o => o.value.trim())))
+    if (currentVariants !== initialEditState.variants) return true
     
     // Check images change (count, order, or new images)
     const currentImageIds = editImages.map(img => img.id).join(',')
@@ -73,7 +111,7 @@ export default function ItemDetailPage() {
     if (editImages.some(img => img.isNew)) return true
     
     return false
-  }, [editName, editPrice, editImages, initialEditState])
+  }, [editName, editDescription, editImages, editSpecifications, editVariants, initialEditState])
 
   // Check if image order has changed
   const hasOrderChanges = useMemo(() => {
@@ -83,10 +121,13 @@ export default function ItemDetailPage() {
   }, [managedImages, initialImageOrder])
 
   useEffect(() => {
-    const token = localStorage.getItem('access_token')
-    if (!token) {
-      router.push('/login')
+    const checkAuth = async () => {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) {
+        router.push('/login')
+      }
     }
+    checkAuth()
   }, [router])
 
   const { data: catalogs, isLoading } = useQuery({
@@ -102,6 +143,43 @@ export default function ItemDetailPage() {
   const item = catalog?.items?.find((i: any) => i.id === itemId)
 
   const totalImages = item?.images?.length || 0
+
+  // Auto-select variant options on load (from URL params or default to first)
+  useEffect(() => {
+    if (item?.variants && item.variants.length > 0 && Object.keys(selectedVariants).length === 0) {
+      const defaultSelections: Record<string, string> = {}
+      let hasUrlParams = false
+      
+      item.variants.forEach((variant: { name: string; options: any[] }) => {
+        // Check URL params first
+        const urlValue = searchParams.get(variant.name)
+        if (urlValue) {
+          // Validate that the URL value exists in options
+          const validOption = variant.options.find((o: any) => 
+            (typeof o === 'string' ? o : o.value) === urlValue
+          )
+          if (validOption) {
+            defaultSelections[variant.name] = urlValue
+            hasUrlParams = true
+            return
+          }
+        }
+        // Fall back to first option
+        if (variant.options.length > 0) {
+          const firstOption = variant.options[0]
+          defaultSelections[variant.name] = typeof firstOption === 'string' ? firstOption : firstOption.value
+        }
+      })
+      setSelectedVariants(defaultSelections)
+      
+      // Update URL only if no params were in URL (after a small delay to avoid render cycle)
+      if (!hasUrlParams && Object.keys(defaultSelections).length > 0) {
+        setTimeout(() => {
+          updateVariantUrl(defaultSelections)
+        }, 0)
+      }
+    }
+  }, [item?.variants, searchParams, updateVariantUrl])
 
   // Slide variants for animation
   const slideVariants = {
@@ -149,7 +227,7 @@ export default function ItemDetailPage() {
   }, [selectedImageIndex, page])
 
   const updateItemMutation = useMutation({
-    mutationFn: async ({ itemData }: { itemData: { name?: string; images?: string[]; price?: number } }) => {
+    mutationFn: async ({ itemData }: { itemData: { name?: string; description?: string; images?: string[]; specifications?: { label: string; value: string }[]; variants?: { name: string; options: { value: string; specifications?: { label: string; value: string }[] }[] }[] } }) => {
       const { data, error } = await catalogApi.updateItem(catalogId, itemId, itemData)
       if (error) throw new Error(error.detail)
       return data
@@ -248,8 +326,10 @@ export default function ItemDetailPage() {
     })
     setEditOpen(false)
     setEditName('')
-    setEditPrice('')
+    setEditDescription('')
     setEditImages([])
+    setEditSpecifications([])
+    setEditVariants([])
     setInitialEditState(null)
   }
 
@@ -296,11 +376,29 @@ export default function ItemDetailPage() {
       }
     }).filter(Boolean)
 
+    // Filter out empty specifications
+    const validSpecs = editSpecifications.filter(s => s.label.trim() && s.value.trim())
+    
+    // Filter out empty variants and their options
+    const validVariants = editVariants
+      .map(v => ({
+        name: v.name.trim(),
+        options: v.options
+          .filter(o => o.value.trim())
+          .map(o => ({
+            value: o.value.trim(),
+            specifications: o.specifications?.filter(s => s.label.trim() && s.value.trim())
+          }))
+      }))
+      .filter(v => v.name && v.options.length > 0)
+
     updateItemMutation.mutate({
       itemData: {
         name: editName,
+        description: editDescription.trim() || undefined,
         images: finalUrls,
-        price: editPrice ? parseFloat(editPrice) : undefined,
+        specifications: validSpecs,
+        variants: validVariants,
       },
     })
     setEditUploading(false)
@@ -308,23 +406,38 @@ export default function ItemDetailPage() {
 
   const handleOpenEdit = () => {
     if (item) {
-      const priceStr = item.price?.toString() || ''
       const imageIds = item.images?.map((img: any) => img.id) || []
+      const specs = item.specifications || []
+      const vars = item.variants || []
+      
+      // Convert old format variants (string options) to new format (object options with specs)
+      const convertedVars = vars.map((v: any) => ({
+        name: v.name,
+        options: v.options?.map((o: any) => 
+          typeof o === 'string' 
+            ? { value: o, specifications: [] }
+            : { value: o.value || '', specifications: o.specifications || [] }
+        ) || []
+      }))
       
       setEditName(item.name)
-      setEditPrice(priceStr)
+      setEditDescription(item.description || '')
       setEditImages(item.images?.map((img: any) => ({
         id: img.id,
         url: img.url,
         order: img.order,
         isNew: false,
       })) || [])
+      setEditSpecifications(specs.length > 0 ? specs : [])
+      setEditVariants(convertedVars.length > 0 ? convertedVars : [])
       
       // Store initial state for change detection
       setInitialEditState({
         name: item.name,
-        price: priceStr,
+        description: item.description || '',
         imageIds: imageIds,
+        specifications: JSON.stringify(specs),
+        variants: JSON.stringify(vars),
       })
       
       setEditOpen(true)
@@ -468,31 +581,38 @@ export default function ItemDetailPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-background to-muted/20">
+      {/* Sticky Breadcrumb */}
+      <div className="sticky top-0 z-50 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b">
+        <div className="p-4 md:px-8">
+          <div className="max-w-7xl mx-auto">
+            <nav className="flex items-center gap-2 text-sm">
+              <Link 
+                href="/dashboard/catalogs"
+                className="text-muted-foreground hover:text-foreground transition-colors"
+              >
+                Catalogs
+              </Link>
+              <svg className="w-4 h-4 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
+              <Link 
+                href={`/dashboard/catalogs/${catalogId}`}
+                className="text-muted-foreground hover:text-foreground transition-colors"
+              >
+                {catalog.title}
+              </Link>
+              <svg className="w-4 h-4 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
+              <span className="text-foreground font-medium truncate max-w-[200px]">{item.name}</span>
+            </nav>
+          </div>
+        </div>
+      </div>
+
       {/* Main scrollable content */}
       <div className="p-4 pb-32 md:p-8 md:pb-8">
         <div className="max-w-7xl mx-auto space-y-6 md:space-y-8">
-          {/* Breadcrumb */}
-          <nav className="flex items-center gap-2 text-sm">
-            <Link 
-              href="/dashboard/catalogs"
-              className="text-muted-foreground hover:text-foreground transition-colors"
-            >
-              Catalogs
-            </Link>
-            <svg className="w-4 h-4 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-            </svg>
-            <Link 
-              href={`/dashboard/catalogs/${catalogId}`}
-              className="text-muted-foreground hover:text-foreground transition-colors"
-            >
-              {catalog.title}
-            </Link>
-            <svg className="w-4 h-4 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-            </svg>
-            <span className="text-foreground font-medium truncate max-w-[200px]">{item.name}</span>
-          </nav>
 
           {/* Main Content */}
           <div className="grid lg:grid-cols-2 gap-6 lg:gap-12">
@@ -638,14 +758,109 @@ export default function ItemDetailPage() {
                   <h1 className="text-3xl md:text-4xl lg:text-5xl font-bold tracking-tight">{item.name}</h1>
                 </div>
 
-                {/* Price */}
-                {item.price ? (
-                  <div className="inline-flex items-baseline gap-1">
-                    <span className="text-2xl md:text-3xl lg:text-4xl font-semibold text-muted-foreground">₱{formatPrice(item.price)}</span>
+                {/* Description */}
+                {item.description && (
+                  <div className="pt-4">
+                    <h3 className="text-sm font-medium text-muted-foreground mb-2">Description</h3>
+                    <p className="text-foreground whitespace-pre-wrap">{item.description}</p>
                   </div>
-                ) : (
-                  <div className="inline-flex items-center gap-2 px-4 py-2 bg-muted rounded-full">
-                    <span className="text-muted-foreground">No price set</span>
+                )}
+
+                {/* Specifications - for items without variants */}
+                {item.specifications && item.specifications.length > 0 && (
+                  <div className="pt-4">
+                    <h3 className="text-sm font-medium text-muted-foreground mb-3">Specifications</h3>
+                    <div className="grid gap-2">
+                      {item.specifications.map((spec: { label: string; value: string }, index: number) => (
+                        <div key={index} className="flex items-center justify-between py-2 px-3 bg-muted/50 rounded-lg">
+                          <span className="text-sm text-muted-foreground">{spec.label}</span>
+                          <span className="text-sm font-medium">{spec.value}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Variants with dynamic specifications */}
+                {item.variants && item.variants.length > 0 && (
+                  <div className="pt-4 space-y-4">
+                    <h3 className="text-sm font-medium text-muted-foreground">Select Options</h3>
+                    <div className="space-y-4">
+                      {item.variants.map((variant: { name: string; options: any[] }, index: number) => (
+                        <div key={index}>
+                          <p className="text-sm font-medium mb-2">
+                            {variant.name}
+                            {selectedVariants[variant.name] && (
+                              <span className="ml-2 text-primary">: {selectedVariants[variant.name]}</span>
+                            )}
+                          </p>
+                          <div className="flex flex-wrap gap-2">
+                            {variant.options.map((option: any, optIndex: number) => {
+                              const optionValue = typeof option === 'string' ? option : option.value
+                              return (
+                                <button
+                                  key={optIndex}
+                                  onClick={() => handleVariantSelect(variant.name, optionValue)}
+                                  className={`px-3 py-1.5 text-sm rounded-full border transition-all ${
+                                    selectedVariants[variant.name] === optionValue
+                                      ? 'bg-primary text-primary-foreground border-primary'
+                                      : 'bg-muted hover:bg-muted/80 border-border hover:border-primary/50'
+                                  }`}
+                                >
+                                  {optionValue}
+                                </button>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Dynamic Specifications based on selected variants */}
+                    {(() => {
+                      // Collect all specs from selected variant options
+                      const allSelectedSpecs: { label: string; value: string }[] = []
+                      item.variants.forEach((variant: { name: string; options: any[] }) => {
+                        const selectedValue = selectedVariants[variant.name]
+                        if (selectedValue) {
+                          const selectedOption = variant.options.find((o: any) => 
+                            (typeof o === 'string' ? o : o.value) === selectedValue
+                          )
+                          if (selectedOption && typeof selectedOption === 'object' && selectedOption.specifications) {
+                            allSelectedSpecs.push(...selectedOption.specifications)
+                          }
+                        }
+                      })
+                      
+                      if (allSelectedSpecs.length > 0) {
+                        return (
+                          <div className="pt-4 border-t">
+                            <h3 className="text-sm font-medium text-muted-foreground mb-3">Specifications</h3>
+                            <div className="grid gap-2">
+                              {allSelectedSpecs.map((spec, index) => (
+                                <div key={index} className="flex items-center justify-between py-2 px-3 bg-muted/50 rounded-lg">
+                                  <span className="text-sm text-muted-foreground">{spec.label}</span>
+                                  <span className="text-sm font-medium">{spec.value}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )
+                      }
+                      
+                      // Show hint to select options
+                      const hasAnySpecs = item.variants.some((v: any) => 
+                        v.options.some((o: any) => typeof o === 'object' && o.specifications && o.specifications.length > 0)
+                      )
+                      if (hasAnySpecs && Object.keys(selectedVariants).length === 0) {
+                        return (
+                          <p className="text-xs text-muted-foreground pt-2">
+                            Select an option above to view specifications
+                          </p>
+                        )
+                      }
+                      return null
+                    })()}
                   </div>
                 )}
 
@@ -773,12 +988,12 @@ export default function ItemDetailPage() {
         if (!open) handleCloseEdit()
         else setEditOpen(true)
       }}>
-        <SheetContent side="right" className="overflow-y-auto">
+        <SheetContent side="right" className="flex flex-col">
           <SheetHeader>
             <SheetTitle>Edit Item</SheetTitle>
             <SheetDescription>Update item information and manage images</SheetDescription>
           </SheetHeader>
-          <div className="space-y-4 py-4">
+          <div className="flex-1 overflow-y-auto space-y-4 py-4">
             <div className="space-y-2">
               <label htmlFor="edit-item-name" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
                 Item Name
@@ -788,31 +1003,235 @@ export default function ItemDetailPage() {
                 value={editName}
                 onChange={(e) => setEditName(e.target.value)}
                 placeholder="Item name"
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && editName && !editUploading && !updateItemMutation.isPending) {
-                    handleEditItem()
-                  }
-                }}
               />
             </div>
             <div className="space-y-2">
-              <label htmlFor="edit-item-price" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                Price (optional)
+              <label htmlFor="edit-item-description" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                Description (optional)
               </label>
-              <Input
-                id="edit-item-price"
-                type="number"
-                step="0.01"
-                value={editPrice}
-                onChange={(e) => setEditPrice(e.target.value)}
-                placeholder="0.00"
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && editName && !editUploading && !updateItemMutation.isPending) {
-                    handleEditItem()
-                  }
-                }}
+              <textarea
+                id="edit-item-description"
+                value={editDescription}
+                onChange={(e) => setEditDescription(e.target.value)}
+                placeholder="Item description"
+                className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
               />
             </div>
+            {/* Hide specifications when variants are added - each variant option has its own specs */}
+            {editVariants.length === 0 && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                    Specifications (optional)
+                  </label>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setEditSpecifications([...editSpecifications, { label: '', value: '' }])}
+                  >
+                    <svg className="w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                    </svg>
+                    Add Spec
+                  </Button>
+                </div>
+                {editSpecifications.map((spec, index) => (
+                  <div key={index} className="flex gap-2">
+                    <Input
+                      value={spec.label}
+                      onChange={(e) => {
+                        const newSpecs = [...editSpecifications]
+                        newSpecs[index].label = e.target.value
+                        setEditSpecifications(newSpecs)
+                      }}
+                      placeholder="Label (e.g. Size)"
+                      className="flex-1"
+                    />
+                    <Input
+                      value={spec.value}
+                      onChange={(e) => {
+                        const newSpecs = [...editSpecifications]
+                        newSpecs[index].value = e.target.value
+                        setEditSpecifications(newSpecs)
+                      }}
+                      placeholder="Value (e.g. Large)"
+                      className="flex-1"
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => setEditSpecifications(editSpecifications.filter((_, i) => i !== index))}
+                    >
+                      <svg className="w-4 h-4 text-destructive" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {/* Hide variants when specifications are added - single product with no variants */}
+            {editSpecifications.length === 0 && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                    Variants (optional)
+                  </label>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setEditVariants([...editVariants, { name: '', options: [{ value: '', specifications: [] }] }])}
+                  >
+                    <svg className="w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                    </svg>
+                    Add Variant
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">Add product variants like Size, Color, or Material. Each option can have its own specifications.</p>
+              {editVariants.map((variant, vIndex) => (
+                <div key={vIndex} className="border rounded-lg p-3 space-y-2">
+                  <div className="flex gap-2">
+                    <Input
+                      value={variant.name}
+                      onChange={(e) => {
+                        const newVariants = [...editVariants]
+                        newVariants[vIndex].name = e.target.value
+                        setEditVariants(newVariants)
+                      }}
+                      placeholder="Variant name (e.g. Size, Color)"
+                      className="flex-1"
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => setEditVariants(editVariants.filter((_, i) => i !== vIndex))}
+                    >
+                      <svg className="w-4 h-4 text-destructive" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </Button>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs text-muted-foreground">Options (each option can have its own specifications)</label>
+                    {variant.options.map((option, oIndex) => (
+                      <div key={oIndex} className="border rounded-md p-2 space-y-2 bg-muted/30">
+                        <div className="flex gap-2">
+                          <Input
+                            value={option.value}
+                            onChange={(e) => {
+                              const newVariants = [...editVariants]
+                              newVariants[vIndex].options[oIndex].value = e.target.value
+                              setEditVariants(newVariants)
+                            }}
+                            placeholder={`Option ${oIndex + 1} (e.g. Small, Red)`}
+                            className="flex-1"
+                          />
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => {
+                              const newVariants = [...editVariants]
+                              newVariants[vIndex].options = newVariants[vIndex].options.filter((_, i) => i !== oIndex)
+                              setEditVariants(newVariants)
+                            }}
+                            disabled={variant.options.length <= 1}
+                          >
+                            <svg className="w-4 h-4 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
+                            </svg>
+                          </Button>
+                        </div>
+                        {/* Specifications for this option */}
+                        <div className="pl-2 space-y-1">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs text-muted-foreground">Specs for {option.value || `Option ${oIndex + 1}`}</span>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 text-xs"
+                              onClick={() => {
+                                const newVariants = [...editVariants]
+                                newVariants[vIndex].options[oIndex].specifications = [
+                                  ...newVariants[vIndex].options[oIndex].specifications,
+                                  { label: '', value: '' }
+                                ]
+                                setEditVariants(newVariants)
+                              }}
+                            >
+                              + Add Spec
+                            </Button>
+                          </div>
+                          {option.specifications.map((spec, sIndex) => (
+                            <div key={sIndex} className="flex gap-1">
+                              <Input
+                                value={spec.label}
+                                onChange={(e) => {
+                                  const newVariants = [...editVariants]
+                                  newVariants[vIndex].options[oIndex].specifications[sIndex].label = e.target.value
+                                  setEditVariants(newVariants)
+                                }}
+                                placeholder="Label"
+                                className="flex-1 h-8 text-xs"
+                              />
+                              <Input
+                                value={spec.value}
+                                onChange={(e) => {
+                                  const newVariants = [...editVariants]
+                                  newVariants[vIndex].options[oIndex].specifications[sIndex].value = e.target.value
+                                  setEditVariants(newVariants)
+                                }}
+                                placeholder="Value"
+                                className="flex-1 h-8 text-xs"
+                              />
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8"
+                                onClick={() => {
+                                  const newVariants = [...editVariants]
+                                  newVariants[vIndex].options[oIndex].specifications = 
+                                    newVariants[vIndex].options[oIndex].specifications.filter((_, i) => i !== sIndex)
+                                  setEditVariants(newVariants)
+                                }}
+                              >
+                                <svg className="w-3 h-3 text-destructive" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="w-full"
+                      onClick={() => {
+                        const newVariants = [...editVariants]
+                        newVariants[vIndex].options.push({ value: '', specifications: [] })
+                        setEditVariants(newVariants)
+                      }}
+                    >
+                      <svg className="w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                      </svg>
+                      Add Option
+                    </Button>
+                  </div>
+                </div>
+              ))}
+              </div>
+            )}
             <div className="space-y-2">
               <label htmlFor="edit-item-images" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
                 Add More Images
@@ -843,7 +1262,7 @@ export default function ItemDetailPage() {
               </div>
             )}
           </div>
-          <SheetFooter>
+          <SheetFooter className="border-t pt-4 mt-4">
             <Button
               variant="outline"
               onClick={handleCloseEdit}
@@ -863,19 +1282,19 @@ export default function ItemDetailPage() {
 
       {/* Manage Images Sheet */}
       <Sheet open={manageImagesOpen} onOpenChange={setManageImagesOpen}>
-        <SheetContent side="right" className="overflow-y-auto">
+        <SheetContent side="right" className="flex flex-col">
           <SheetHeader>
             <SheetTitle>Reorder Images</SheetTitle>
             <SheetDescription>Drag images to change their order. The first image will be the thumbnail.</SheetDescription>
           </SheetHeader>
-          <div className="py-4">
+          <div className="flex-1 overflow-y-auto py-4">
             <SortableImageGrid
               images={managedImages}
               onReorder={setManagedImages}
               columns={2}
             />
           </div>
-          <SheetFooter>
+          <SheetFooter className="border-t pt-4 mt-4">
             <Button
               variant="outline"
               onClick={() => setManageImagesOpen(false)}

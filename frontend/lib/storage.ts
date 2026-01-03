@@ -1,4 +1,4 @@
-import { createClient } from '@supabase/supabase-js'
+import { supabase } from './supabase'
 
 const BUCKET_NAME = 'catalog-images'
 const MAX_FILE_SIZE = 1 * 1024 * 1024 // 1MB in bytes
@@ -25,32 +25,13 @@ export function validateMultipleFiles(files: File[]): { valid: boolean; errors: 
   return { valid: errors.length === 0, errors }
 }
 
-const getSupabaseClient = () => {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  
-  // Get access token from localStorage
-  const accessToken = localStorage.getItem('access_token')
-  
-  // Create Supabase client with access token if available
-  const client = createClient(supabaseUrl, supabaseAnonKey, {
-    global: {
-      headers: accessToken ? {
-        Authorization: `Bearer ${accessToken}`
-      } : {}
-    }
-  })
-  
-  return client
-}
-
 export async function uploadImage(
   file: File, 
   catalogId: string
 ): Promise<{ url: string | null; error: Error | null }> {
   try {
-    const accessToken = localStorage.getItem('access_token')
-    if (!accessToken) {
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) {
       return { url: null, error: new Error('You must be logged in to upload images') }
     }
 
@@ -63,8 +44,6 @@ export async function uploadImage(
     if (!sizeValidation.valid) {
       return { url: null, error: new Error(sizeValidation.error) }
     }
-
-    const supabase = getSupabaseClient()
 
     const fileExt = file.name.split('.').pop()
     const fileName = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}.${fileExt}`
@@ -127,12 +106,10 @@ export async function deleteImage(
   imageUrl: string
 ): Promise<{ success: boolean; error: Error | null }> {
   try {
-    const accessToken = localStorage.getItem('access_token')
-    if (!accessToken) {
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) {
       return { success: false, error: new Error('You must be logged in to delete images') }
     }
-
-    const supabase = getSupabaseClient()
     
     // Extract the path from the URL
     // URL format: https://<project>.supabase.co/storage/v1/object/public/catalog-images/<catalogId>/<filename>

@@ -110,7 +110,7 @@ export function CatalogsChart({ catalogs }: CatalogsChartProps) {
                 <ChartTooltipContent
                   className="w-[150px]"
                   nameKey="items"
-                  labelFormatter={(value) => {
+                  labelFormatter={(value: any) => {
                     const catalog = catalogs?.find(
                       (c) => c.title.length > 20 
                         ? c.title.substring(0, 20) + "..." === value

@@ -98,7 +98,7 @@ export default function DashboardPage() {
               </CardContent>
             </Card>
           </div>
-        ) : catalogs && catalogs.length > 0 ? (
+        ) : catalogs && Array.isArray(catalogs) && catalogs.length > 0 ? (
           <div className="grid gap-4 md:grid-cols-2">
             <CatalogsChart catalogs={catalogs} />
             <CatalogsPieChart catalogs={catalogs} />

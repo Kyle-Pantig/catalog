@@ -130,7 +130,7 @@ export function CatalogsPieChart({ catalogs }: CatalogsPieChartProps) {
               content={
                 <ChartTooltipContent 
                   hideLabel 
-                  labelFormatter={(value, payload) => {
+                  labelFormatter={(value: any, payload: any) => {
                     if (payload && payload[0]) {
                       const data = payload[0].payload
                       return data.catalog

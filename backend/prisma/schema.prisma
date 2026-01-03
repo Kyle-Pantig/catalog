@@ -1,0 +1,54 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-py"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model Catalog {
+  id          String      @id @default(uuid())
+  title       String
+  description String?
+  ownerId     String      // Supabase user ID from auth.users
+  items       Item[]
+  shareCodes  ShareCode[]
+  createdAt   DateTime    @default(now())
+}
+
+model Item {
+  id          String      @id @default(uuid())
+  catalogId   String
+  catalog     Catalog     @relation(fields: [catalogId], references: [id], onDelete: Cascade)
+  name        String
+  price       Float?
+  images      ItemImage[]
+  createdAt   DateTime    @default(now())
+}
+
+model ItemImage {
+  id        String   @id @default(uuid())
+  itemId    String
+  item      Item     @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  url       String
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+}
+
+model ShareCode {
+  id         String    @id @default(uuid())
+  code       String    @unique
+  catalogId  String
+  catalog    Catalog   @relation(fields: [catalogId], references: [id], onDelete: Cascade)
+  expiresAt  DateTime?
+  usedAt     DateTime?
+  usedByIp   String?
+  isActive   Boolean   @default(true)
+  createdAt  DateTime  @default(now())
+}
+

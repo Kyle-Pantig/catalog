@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { DeleteConfirmDialog } from '@/components/delete-confirm-dialog'
 import { SortableImageGrid, ImageItem } from '@/components/sortable-image-grid'
 import { catalogApi } from '@/lib/api'
@@ -511,26 +512,12 @@ export default function ItemDetailPage() {
                   {/* Price Skeleton */}
                   <Skeleton className="h-16 md:h-20 lg:h-24 w-48" />
 
-                  {/* Desktop Actions Skeleton - hidden on mobile */}
-                  <div className="hidden md:flex flex-col sm:flex-row gap-3 pt-6">
-                    <Skeleton className="h-12 flex-1" />
-                    <Skeleton className="h-12 flex-1" />
-                    <Skeleton className="h-12 flex-1" />
-                  </div>
                 </div>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Mobile Fixed Bottom Action Bar Skeleton */}
-        <div className="fixed bottom-0 left-0 right-0 md:hidden bg-background/95 backdrop-blur-sm border-t p-4 space-y-2">
-          <Skeleton className="h-11 w-full" />
-          <div className="flex gap-2">
-            <Skeleton className="h-11 flex-1" />
-            <Skeleton className="h-11 flex-1" />
-          </div>
-        </div>
       </div>
     )
   }
@@ -595,7 +582,7 @@ export default function ItemDetailPage() {
       </div>
 
       {/* Main scrollable content */}
-      <div className="p-4 pb-32 md:p-8 md:pb-8">
+      <div className="p-4 md:p-8">
         <div className="max-w-7xl mx-auto space-y-6 md:space-y-8">
 
           {/* Main Content */}
@@ -738,8 +725,42 @@ export default function ItemDetailPage() {
             <div className="flex flex-col">
               <div className="flex-1 space-y-6">
                 {/* Title */}
-                <div>
-                  <h1 className="text-3xl md:text-4xl lg:text-5xl font-bold tracking-tight">{item.name}</h1>
+                <div className="flex items-start justify-between gap-4">
+                  <h1 className="text-3xl md:text-4xl lg:text-5xl font-bold tracking-tight flex-1">{item.name}</h1>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="ghost" size="icon" className="flex-shrink-0">
+                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
+                        </svg>
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      {images.length > 1 && (
+                        <DropdownMenuItem onClick={handleOpenManageImages}>
+                          <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8h16M4 16h16" />
+                          </svg>
+                          Reorder Images
+                        </DropdownMenuItem>
+                      )}
+                      <DropdownMenuItem onClick={handleOpenEdit}>
+                        <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                        </svg>
+                        Edit Item
+                      </DropdownMenuItem>
+                      <DropdownMenuItem 
+                        onClick={() => setDeleteDialogOpen(true)}
+                        className="text-destructive focus:text-destructive"
+                      >
+                        <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                        Delete Item
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </div>
 
                 {/* Description */}
@@ -848,85 +869,12 @@ export default function ItemDetailPage() {
                   </div>
                 )}
 
-                {/* Desktop Actions - hidden on mobile */}
-                <div className="hidden md:flex flex-col sm:flex-row gap-3 pt-6">
-                {images.length > 1 && (
-                  <Button 
-                    size="lg"
-                    variant="outline" 
-                    className="flex-1"
-                    onClick={handleOpenManageImages}
-                  >
-                    <svg className="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8h16M4 16h16" />
-                    </svg>
-                    Reorder Images
-                  </Button>
-                )}
-                <Button 
-                  size="lg" 
-                  className="flex-1"
-                  onClick={handleOpenEdit}
-                >
-                  <svg className="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                  </svg>
-                  Edit Item
-                </Button>
-                <Button 
-                  size="lg"
-                  variant="outline" 
-                  onClick={() => setDeleteDialogOpen(true)}
-                  className="flex-1 text-destructive hover:text-destructive hover:bg-destructive/10 border-destructive/30"
-                >
-                  <svg className="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                  </svg>
-                  Delete Item
-                </Button>
-                </div>
               </div>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Mobile Fixed Bottom Action Bar */}
-      <div className="fixed bottom-0 left-0 right-0 md:hidden bg-background/95 backdrop-blur-sm border-t p-4 space-y-2">
-        {images.length > 1 && (
-          <Button 
-            variant="outline" 
-            className="w-full"
-            onClick={handleOpenManageImages}
-          >
-            <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8h16M4 16h16" />
-            </svg>
-            Reorder Images
-          </Button>
-        )}
-        <div className="flex gap-2">
-          <Button 
-            className="flex-1"
-            onClick={handleOpenEdit}
-          >
-            <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-            </svg>
-            Edit
-          </Button>
-          <Button 
-            variant="outline" 
-            onClick={() => setDeleteDialogOpen(true)}
-            className="flex-1 text-destructive hover:text-destructive hover:bg-destructive/10 border-destructive/30"
-          >
-            <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-            </svg>
-            Delete
-          </Button>
-        </div>
-      </div>
 
       {/* Edit Item Sheet */}
       <Sheet open={editOpen} onOpenChange={(open) => {

@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     app_name: str = "Catalog API"
     debug: bool = False
     
+    # CORS
+    cors_origins: str = os.getenv("CORS_ORIGINS", "http://localhost:3000")
+    
     model_config = SettingsConfigDict(
         env_file=None,  # Don't auto-load .env, we're using dotenv manually
         case_sensitive=False,

@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 import asyncio
 import logging
 from app.core.database import connect_db, disconnect_db
+from app.core.config import settings
 from app.api import auth, catalog, share
 from app.services.cleanup import cleanup_expired_share_codes, deactivate_expired_share_codes, run_periodic_cleanup
 
@@ -41,9 +42,11 @@ app = FastAPI(
 )
 
 # Configure CORS
+# Allow multiple origins from environment variable (comma-separated)
+cors_origins = [origin.strip() for origin in settings.cors_origins.split(",")]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # Next.js default port
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

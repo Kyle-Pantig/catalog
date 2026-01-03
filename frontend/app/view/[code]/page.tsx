@@ -85,19 +85,26 @@ export default function ViewCatalogPage() {
     setSelectedVariants(prev => ({ ...prev, [variantName]: optionValue }))
   }
 
+  // Get product URL with variants
+  const getProductUrl = useCallback((item: any, variants?: Record<string, string>) => {
+    if (!catalog) return ''
+    let productUrl = `${window.location.origin}/dashboard/catalogs/${catalog.id}/items/${item.id}`
+    const variantParams = variants || selectedVariants
+    if (Object.keys(variantParams).length > 0) {
+      const queryString = Object.entries(variantParams)
+        .map(([name, value]) => `${encodeURIComponent(name)}=${encodeURIComponent(value)}`)
+        .join('&')
+      productUrl += `?${queryString}`
+    }
+    return productUrl
+  }, [catalog, selectedVariants])
+
   // Copy link with variants from sheet
   const handleCopyWithVariants = async () => {
     if (!catalog || !selectedItem) return
     
     try {
-      let productUrl = `${window.location.origin}/dashboard/catalogs/${catalog.id}/items/${selectedItem.id}`
-      if (Object.keys(selectedVariants).length > 0) {
-        const queryString = Object.entries(selectedVariants)
-          .map(([name, value]) => `${encodeURIComponent(name)}=${encodeURIComponent(value)}`)
-          .join('&')
-        productUrl += `?${queryString}`
-      }
-      
+      const productUrl = getProductUrl(selectedItem, selectedVariants)
       await navigator.clipboard.writeText(productUrl)
       setCopiedItemId(selectedItem.id)
       setVariantSheetOpen(false)
@@ -107,6 +114,38 @@ export default function ViewCatalogPage() {
       }, 2000)
     } catch (error) {
       toast.error('Failed to copy link')
+    }
+  }
+
+  // Share link with variants from sheet
+  const handleShareWithVariants = async () => {
+    if (!catalog || !selectedItem) return
+    
+    try {
+      const productUrl = getProductUrl(selectedItem, selectedVariants)
+      
+      if (navigator.share) {
+        await navigator.share({
+          title: selectedItem.name,
+          text: `Check out ${selectedItem.name}`,
+          url: productUrl
+        })
+        setVariantSheetOpen(false)
+      } else {
+        // Fallback to copy if share is not available
+        await navigator.clipboard.writeText(productUrl)
+        setCopiedItemId(selectedItem.id)
+        setVariantSheetOpen(false)
+        toast.success('Product link copied!')
+        setTimeout(() => {
+          setCopiedItemId(null)
+        }, 2000)
+      }
+    } catch (error: any) {
+      // User cancelled share or error occurred
+      if (error.name !== 'AbortError') {
+        toast.error('Failed to share link')
+      }
     }
   }
 
@@ -126,14 +165,56 @@ export default function ViewCatalogPage() {
         toast.error('Catalog not loaded')
         return
       }
-      const productUrl = `${window.location.origin}/dashboard/catalogs/${catalog.id}/items/${item.id}`
+      const productUrl = getProductUrl(item)
       await navigator.clipboard.writeText(productUrl)
       setCopiedItemId(item.id)
+      toast.success('Product link copied!')
       setTimeout(() => {
         setCopiedItemId(null)
       }, 2000)
     } catch (error) {
       toast.error('Failed to copy link')
+    }
+  }
+
+  const handleShareProductLink = async (item: any, e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    
+    // If item has variants, open the sheet
+    if (itemHasVariants(item)) {
+      handleOpenVariantSheet(item, e)
+      return
+    }
+    
+    // Otherwise share directly
+    try {
+      if (!catalog) {
+        toast.error('Catalog not loaded')
+        return
+      }
+      const productUrl = getProductUrl(item)
+      
+      if (navigator.share) {
+        await navigator.share({
+          title: item.name,
+          text: `Check out ${item.name}`,
+          url: productUrl
+        })
+      } else {
+        // Fallback to copy if share is not available
+        await navigator.clipboard.writeText(productUrl)
+        setCopiedItemId(item.id)
+        toast.success('Product link copied!')
+        setTimeout(() => {
+          setCopiedItemId(null)
+        }, 2000)
+      }
+    } catch (error: any) {
+      // User cancelled share or error occurred
+      if (error.name !== 'AbortError') {
+        toast.error('Failed to share link')
+      }
     }
   }
 
@@ -221,39 +302,60 @@ export default function ViewCatalogPage() {
                         <CardTitle className="line-clamp-2 text-sm md:text-base">{item.name}</CardTitle>
                       </CardHeader>
                     </Link>
-                    {/* Copy Link Button */}
+                    {/* Copy and Share Buttons */}
                     <div className="px-2 md:px-6 pb-2 md:pb-4 space-y-1 md:space-y-2">
-                      <Button
-                        onClick={(e) => handleCopyProductLink(item, e)}
-                        variant={copiedItemId === item.id ? "default" : "outline"}
-                        className="w-full text-xs md:text-sm"
-                        size="sm"
-                      >
-                        {copiedItemId === item.id ? (
-                          <>
+                      {itemHasVariants(item) ? (
+                        <Button
+                          onClick={(e) => handleCopyProductLink(item, e)}
+                          variant="outline"
+                          className="w-full text-xs md:text-sm"
+                          size="sm"
+                        >
+                          <svg className="w-3 h-3 md:w-4 md:h-4 mr-1 md:mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16m-7 6h7" />
+                          </svg>
+                          <span className="hidden md:inline">Select Options</span>
+                          <span className="md:hidden">Select</span>
+                        </Button>
+                      ) : (
+                        <div className="flex gap-2">
+                          <Button
+                            onClick={(e) => handleCopyProductLink(item, e)}
+                            variant={copiedItemId === item.id ? "default" : "outline"}
+                            className="flex-1 text-xs md:text-sm"
+                            size="sm"
+                          >
+                            {copiedItemId === item.id ? (
+                              <>
+                                <svg className="w-3 h-3 md:w-4 md:h-4 mr-1 md:mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                </svg>
+                                Copied
+                              </>
+                            ) : (
+                              <>
+                                <svg className="w-3 h-3 md:w-4 md:h-4 mr-1 md:mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                </svg>
+                                <span className="hidden md:inline">Copy</span>
+                                <span className="md:hidden">Copy</span>
+                              </>
+                            )}
+                          </Button>
+                          <Button
+                            onClick={(e) => handleShareProductLink(item, e)}
+                            variant="default"
+                            className="flex-1 text-xs md:text-sm"
+                            size="sm"
+                          >
                             <svg className="w-3 h-3 md:w-4 md:h-4 mr-1 md:mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
                             </svg>
-                            Copied
-                          </>
-                        ) : itemHasVariants(item) ? (
-                          <>
-                            <svg className="w-3 h-3 md:w-4 md:h-4 mr-1 md:mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16m-7 6h7" />
-                            </svg>
-                            <span className="hidden md:inline">Select Options & Copy</span>
-                            <span className="md:hidden">Select & Copy</span>
-                          </>
-                        ) : (
-                          <>
-                            <svg className="w-3 h-3 md:w-4 md:h-4 mr-1 md:mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                            </svg>
-                            <span className="hidden md:inline">Copy Product Link</span>
-                            <span className="md:hidden">Copy Link</span>
-                          </>
-                        )}
-                      </Button>
+                            <span className="hidden md:inline">Share</span>
+                            <span className="md:hidden">Share</span>
+                          </Button>
+                        </div>
+                      )}
                       <p className="text-[10px] md:text-xs text-muted-foreground text-center">
                         Send to your sales team or customer
                       </p>
@@ -362,16 +464,28 @@ export default function ViewCatalogPage() {
               ))}
             </div>
 
-            <SheetFooter className="pt-4 border-t">
+            <SheetFooter className="pt-4 border-t gap-2">
               <Button
                 onClick={handleCopyWithVariants}
-                className="w-full"
+                variant="outline"
+                className="flex-1"
                 size="lg"
               >
                 <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
                 </svg>
-                Copy Product Link
+                Copy
+              </Button>
+              <Button
+                onClick={handleShareWithVariants}
+                variant="default"
+                className="flex-1"
+                size="lg"
+              >
+                <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+                </svg>
+                Share
               </Button>
             </SheetFooter>
           </SheetContent>

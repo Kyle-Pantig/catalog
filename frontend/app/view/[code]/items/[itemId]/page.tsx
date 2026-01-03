@@ -164,6 +164,19 @@ export default function ViewItemDetailPage() {
     setSelectedImageIndex(index)
   }, [selectedImageIndex, page])
 
+  // Get product URL with variants
+  const getProductUrl = useCallback(() => {
+    if (!catalog) return ''
+    let productUrl = `${window.location.origin}/dashboard/catalogs/${catalog.id}/items/${itemId}`
+    if (hasVariants && Object.keys(selectedVariants).length > 0) {
+      const queryString = Object.entries(selectedVariants)
+        .map(([name, value]) => `${encodeURIComponent(name)}=${encodeURIComponent(value)}`)
+        .join('&')
+      productUrl += `?${queryString}`
+    }
+    return productUrl
+  }, [catalog, itemId, hasVariants, selectedVariants])
+
   // Copy product link with selected variants
   const handleCopyLink = useCallback(async () => {
     try {
@@ -172,15 +185,7 @@ export default function ViewItemDetailPage() {
         return
       }
       
-      // Build the dashboard URL with catalog ID and variant query parameters
-      let productUrl = `${window.location.origin}/dashboard/catalogs/${catalog.id}/items/${itemId}`
-      if (hasVariants && Object.keys(selectedVariants).length > 0) {
-        const queryString = Object.entries(selectedVariants)
-          .map(([name, value]) => `${encodeURIComponent(name)}=${encodeURIComponent(value)}`)
-          .join('&')
-        productUrl += `?${queryString}`
-      }
-      
+      const productUrl = getProductUrl()
       await navigator.clipboard.writeText(productUrl)
       setCopied(true)
       toast.success('Product link copied!')
@@ -190,7 +195,51 @@ export default function ViewItemDetailPage() {
     } catch (error) {
       toast.error('Failed to copy link')
     }
-  }, [catalog, itemId, hasVariants, selectedVariants])
+  }, [catalog, getProductUrl])
+
+  // Share product link with selected variants
+  const handleShareLink = useCallback(async () => {
+    try {
+      if (!catalog || !item) {
+        toast.error('Catalog not loaded')
+        return
+      }
+      
+      const productUrl = getProductUrl()
+      
+      if (navigator.share) {
+        await navigator.share({
+          title: item.name,
+          text: `Check out ${item.name}`,
+          url: productUrl
+        })
+      } else {
+        // Fallback to copy if share is not available
+        await navigator.clipboard.writeText(productUrl)
+        setCopied(true)
+        toast.success('Product link copied!')
+        setTimeout(() => {
+          setCopied(false)
+        }, 2000)
+      }
+    } catch (error: any) {
+      // User cancelled share or error occurred
+      if (error.name !== 'AbortError') {
+        // Fallback to copy on error
+        try {
+          const productUrl = getProductUrl()
+          await navigator.clipboard.writeText(productUrl)
+          setCopied(true)
+          toast.success('Product link copied!')
+          setTimeout(() => {
+            setCopied(false)
+          }, 2000)
+        } catch (copyError) {
+          toast.error('Failed to share link')
+        }
+      }
+    }
+  }, [catalog, item, getProductUrl])
 
   // Get images from item
   const images = item?.images || []
@@ -232,22 +281,6 @@ export default function ViewItemDetailPage() {
                   
                   {/* Price Skeleton */}
                   <Skeleton className="h-16 md:h-20 lg:h-24 w-48" />
-                  
-                  {/* Metadata Skeleton */}
-                  <div className="grid gap-4 pt-6 border-t">
-                    <div className="flex items-center gap-3">
-                      <Skeleton className="h-5 w-5 rounded" />
-                      <Skeleton className="h-5 w-32" />
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <Skeleton className="h-5 w-5 rounded" />
-                      <Skeleton className="h-5 w-40" />
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <Skeleton className="h-5 w-5 rounded" />
-                      <Skeleton className="h-5 w-40" />
-                    </div>
-                  </div>
                 </div>
               </div>
             </div>
@@ -567,77 +600,63 @@ export default function ViewItemDetailPage() {
                   </div>
                 )}
 
-                {/* Metadata */}
-                <div className="grid gap-4 pt-6 border-t">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
-                      <svg className="w-5 h-5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-                      </svg>
-                    </div>
-                    <div>
-                      <p className="text-sm text-muted-foreground">Catalog</p>
-                      <Link 
-                        href={`/view/${code}`}
-                        className="font-medium hover:text-primary transition-colors"
-                      >
-                        {catalog.title}
-                      </Link>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
-                      <svg className="w-5 h-5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                      </svg>
-                    </div>
-                    <div>
-                      <p className="text-sm text-muted-foreground">Added on</p>
-                      <p className="font-medium">
-                        {new Date(item.createdAt).toLocaleDateString('en-US', {
-                          weekday: 'long',
-                          year: 'numeric',
-                          month: 'long',
-                          day: 'numeric',
-                        })}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Copy Link Button */}
+                {/* Copy and Share Buttons */}
                 <div className="pt-6 space-y-2">
-                  <Button
-                    onClick={handleCopyLink}
-                    className="w-full"
-                    size="lg"
-                    variant={copied ? "default" : "outline"}
-                    disabled={hasVariants && !allVariantsSelected}
-                  >
-                    {copied ? (
-                      <>
-                        <svg className="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                        </svg>
-                        Copied!
-                      </>
-                    ) : hasVariants && !allVariantsSelected ? (
-                      <>
-                        <svg className="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                        </svg>
-                        Select Options First
-                      </>
-                    ) : (
-                      <>
-                        <svg className="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                        </svg>
-                        Copy Product Link
-                      </>
-                    )}
-                  </Button>
+                  <div className="flex gap-2">
+                    <Button
+                      onClick={handleCopyLink}
+                      className="flex-1"
+                      size="lg"
+                      variant={copied ? "default" : "outline"}
+                      disabled={hasVariants && !allVariantsSelected}
+                    >
+                      {copied ? (
+                        <>
+                          <svg className="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                          </svg>
+                          Copied!
+                        </>
+                      ) : hasVariants && !allVariantsSelected ? (
+                        <>
+                          <svg className="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                          </svg>
+                          Select First
+                        </>
+                      ) : (
+                        <>
+                          <svg className="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                          </svg>
+                          Copy
+                        </>
+                      )}
+                    </Button>
+                    <Button
+                      onClick={handleShareLink}
+                      className="flex-1"
+                      size="lg"
+                      variant="default"
+                      disabled={hasVariants && !allVariantsSelected}
+                    >
+                      {hasVariants && !allVariantsSelected ? (
+                        <>
+                          <svg className="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                          </svg>
+                          Select First
+                        </>
+                      ) : (
+                        <>
+                          <svg className="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+                          </svg>
+                          Share
+                        </>
+                      )}
+                    </Button>
+                  </div>
                   <p className="text-xs text-muted-foreground text-center">
                     Send this link to your sales team or customer
                   </p>

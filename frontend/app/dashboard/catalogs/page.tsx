@@ -604,7 +604,7 @@ export default function CatalogsPage() {
             <div className="md:hidden space-y-4">
               {catalogs.map((catalog: any) => (
                 <Card key={catalog.id} className="border-2 hover:shadow-lg transition-shadow overflow-hidden">
-                  {catalog.coverPhoto && (
+                  {catalog.coverPhoto ? (
                     <div className="relative w-full h-32">
                       <Image
                         src={catalog.coverPhoto}
@@ -614,6 +614,12 @@ export default function CatalogsPage() {
                         unoptimized
                       />
                       <div className="absolute inset-0 bg-gradient-to-t from-background/80 via-background/40 to-transparent" />
+                    </div>
+                  ) : (
+                    <div className="relative w-full h-32 bg-gradient-to-br from-muted to-muted/50 flex items-center justify-center">
+                      <svg className="w-12 h-12 text-muted-foreground/30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={0.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                      </svg>
                     </div>
                   )}
                   <CardHeader className={`relative ${catalog.coverPhoto ? 'pt-4' : ''}`}>
@@ -790,7 +796,7 @@ export default function CatalogsPage() {
               <div className="hidden md:grid md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                 {catalogs.map((catalog: any) => (
                   <Card key={catalog.id} className="border-2 hover:shadow-lg transition-shadow flex flex-col overflow-hidden">
-                    {catalog.coverPhoto && (
+                    {catalog.coverPhoto ? (
                       <div className="relative w-full h-40">
                         <Image
                           src={catalog.coverPhoto}
@@ -800,6 +806,12 @@ export default function CatalogsPage() {
                           unoptimized
                         />
                         <div className="absolute inset-0 bg-gradient-to-t from-background/80 via-background/40 to-transparent" />
+                      </div>
+                    ) : (
+                      <div className="relative w-full h-40 bg-gradient-to-br from-muted to-muted/50 flex items-center justify-center">
+                        <svg className="w-16 h-16 text-muted-foreground/30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={0.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                        </svg>
                       </div>
                     )}
                     <CardHeader className={`relative ${catalog.coverPhoto ? 'pt-4' : ''}`}>

@@ -32,6 +32,8 @@ export default function ItemDetailPage() {
   // Image gallery state
   const [selectedImageIndex, setSelectedImageIndex] = useState(0)
   const [[page, direction], setPage] = useState([0, 0])
+  const [lightboxVisible, setLightboxVisible] = useState(false)
+  const [lightboxIndex, setLightboxIndex] = useState(0)
 
   // Variant selection state (for display)
   const [selectedVariants, setSelectedVariants] = useState<Record<string, string>>({})
@@ -160,43 +162,6 @@ export default function ItemDetailPage() {
   const catalog = (catalogs as any[])?.find((c: any) => c.id === catalogId)
   const item = catalog?.items?.find((i: any) => i.id === itemId)
 
-  // Filter images based on selected variants
-  const filteredImages = useMemo(() => {
-    if (!item?.images) return []
-    
-    const images = item.images
-    
-    // If no variants selected or item has no variants, return all images
-    if (!item.variants || item.variants.length === 0 || Object.keys(selectedVariants).length === 0) {
-      // Return images without variant options first, then images with variant options
-      const withoutVariants = images.filter((img: any) => !img.variantOptions || Object.keys(img.variantOptions || {}).length === 0)
-      const withVariants = images.filter((img: any) => img.variantOptions && Object.keys(img.variantOptions).length > 0)
-      return [...withoutVariants, ...withVariants]
-    }
-    
-    // Filter images that match selected variants
-    const matchingImages = images.filter((img: any) => {
-      if (!img.variantOptions || Object.keys(img.variantOptions).length === 0) {
-        // Images without variant options are always shown
-        return true
-      }
-      
-      // Check if image's variant options match selected variants
-      const imgVariants = img.variantOptions || {}
-      return Object.keys(selectedVariants).every(variantName => {
-        const selectedValue = selectedVariants[variantName]
-        const imgValue = imgVariants[variantName]
-        // If image has this variant, it must match; if not, it's okay
-        return !imgValue || imgValue === selectedValue
-      })
-    })
-    
-    // If we have matching images, return them; otherwise return all images
-    return matchingImages.length > 0 ? matchingImages : images
-  }, [item?.images, selectedVariants])
-
-  const totalImages = filteredImages.length || 0
-
   // Auto-select variant options on load (from URL params or default to first)
   useEffect(() => {
     if (item?.variants && item.variants.length > 0 && Object.keys(selectedVariants).length === 0) {
@@ -252,32 +217,43 @@ export default function ItemDetailPage() {
     }),
   }
 
-  const paginate = useCallback((newDirection: number) => {
-    const newIndex = selectedImageIndex + newDirection
-    if (newIndex >= 0 && newIndex < totalImages) {
-      setPage([page + newDirection, newDirection])
-      setSelectedImageIndex(newIndex)
+  // Navigate to a specific image index (in allImages) and auto-select variants if needed
+  const navigateToImage = useCallback((newIndex: number, allImgs: any[]) => {
+    if (newIndex < 0 || newIndex >= allImgs.length) return
+    
+    const targetImage = allImgs[newIndex]
+    const newDirection = newIndex > selectedImageIndex ? 1 : -1
+    
+    // If target image has variant options, auto-select them
+    if (targetImage?.variantOptions && Object.keys(targetImage.variantOptions).length > 0) {
+      const newSelections = { ...selectedVariants }
+      Object.entries(targetImage.variantOptions).forEach(([variantName, optionValue]) => {
+        newSelections[variantName] = optionValue as string
+      })
+      setSelectedVariants(newSelections)
+      updateVariantUrl(newSelections)
     }
-  }, [selectedImageIndex, totalImages, page])
+    
+    setPage([page + newDirection, newDirection])
+    setSelectedImageIndex(newIndex)
+  }, [selectedImageIndex, selectedVariants, updateVariantUrl, page])
 
-  const goToPrevImage = useCallback(() => {
+  const goToPrevImage = useCallback((allImgs: any[]) => {
     if (selectedImageIndex > 0) {
-      paginate(-1)
+      navigateToImage(selectedImageIndex - 1, allImgs)
     }
-  }, [selectedImageIndex, paginate])
+  }, [selectedImageIndex, navigateToImage])
 
-  const goToNextImage = useCallback(() => {
-    if (selectedImageIndex < totalImages - 1) {
-      paginate(1)
+  const goToNextImage = useCallback((allImgs: any[]) => {
+    if (selectedImageIndex < allImgs.length - 1) {
+      navigateToImage(selectedImageIndex + 1, allImgs)
     }
-  }, [selectedImageIndex, totalImages, paginate])
+  }, [selectedImageIndex, navigateToImage])
 
   // Direct image selection (for thumbnails/dots)
-  const goToImage = useCallback((index: number) => {
-    const newDirection = index > selectedImageIndex ? 1 : -1
-    setPage([page + newDirection, newDirection])
-    setSelectedImageIndex(index)
-  }, [selectedImageIndex, page])
+  const goToImage = useCallback((index: number, allImgs: any[]) => {
+    navigateToImage(index, allImgs)
+  }, [navigateToImage])
 
   const updateItemMutation = useMutation({
     mutationFn: async ({ itemData }: { itemData: { name?: string; description?: string; images?: string[] | Array<{ url: string; order?: number; variantOptions?: Record<string, string> }>; specifications?: { label: string; value: string }[]; variants?: { name: string; options: { value: string; specifications?: { label: string; value: string }[] }[] }[] } }) => {
@@ -556,77 +532,16 @@ export default function ItemDetailPage() {
     reorderImagesMutation.mutate(imageOrders)
   }
 
-  // Get images from item (filtered by variants for main display)
-  const images = filteredImages
-  const hasImages = images.length > 0
-  const selectedImage = hasImages ? images[selectedImageIndex] : null
-  
-  // For thumbnails, always show all images so users can see all available images
+  // All images for navigation (use original order from item)
   const allImages = item?.images || []
-  
-  // Get the actual position of the selected image in all images
-  const selectedImagePosition = useMemo(() => {
-    if (!selectedImage || !allImages.length) return 0
-    const position = allImages.findIndex((img: any) => img.id === selectedImage.id)
-    return position !== -1 ? position + 1 : 0
-  }, [selectedImage, allImages])
+  const hasImages = allImages.length > 0
+  const selectedImage = hasImages ? allImages[selectedImageIndex] : null
 
-  // Handle clicking on a thumbnail image - switch variants if needed
+  // Handle clicking on a thumbnail image
   const handleThumbnailClick = useCallback((img: any, allImagesIndex: number) => {
     if (!item?.images) return
-    
-    const filteredIndex = images.findIndex((filteredImg: any) => filteredImg.id === img.id)
-    const isVisible = filteredIndex !== -1
-    
-    if (isVisible) {
-      // Image is already visible, just switch to it
-      goToImage(filteredIndex)
-    } else {
-      // Image is not visible - switch variants to make it visible
-      if (img.variantOptions && Object.keys(img.variantOptions).length > 0) {
-        // Update selected variants to match this image's variant options
-        const newSelections = { ...selectedVariants }
-        Object.entries(img.variantOptions).forEach(([variantName, optionValue]) => {
-          newSelections[variantName] = optionValue as string
-        })
-        
-        // Calculate what the filtered images will be with new selections
-        const newFilteredImages = item.images.filter((filteredImg: any) => {
-          if (!filteredImg.variantOptions || Object.keys(filteredImg.variantOptions).length === 0) {
-            return true
-          }
-          const imgVariants = filteredImg.variantOptions || {}
-          return Object.keys(newSelections).every(variantName => {
-            const selectedValue = newSelections[variantName]
-            const imgValue = imgVariants[variantName]
-            return !imgValue || imgValue === selectedValue
-          })
-        })
-        
-        // Find the target image index in the new filtered list
-        const targetIndex = newFilteredImages.findIndex((filteredImg: any) => filteredImg.id === img.id)
-        
-        // Update variants and navigate to the image
-        setSelectedVariants(newSelections)
-        updateVariantUrl(newSelections)
-        setIsInitialLoad(false)
-        
-        // Navigate to the image after a brief delay to allow state update
-        if (targetIndex !== -1) {
-          setTimeout(() => {
-            setSelectedImageIndex(targetIndex)
-            setPage([0, 0])
-          }, 100)
-        }
-      } else {
-        // Image has no variant options, should always be visible
-        const foundIndex = images.findIndex((filteredImg: any) => filteredImg.id === img.id)
-        if (foundIndex !== -1) {
-          goToImage(foundIndex)
-        }
-      }
-    }
-  }, [images, selectedVariants, updateVariantUrl, goToImage, item])
+    goToImage(allImagesIndex, item.images)
+  }, [goToImage, item])
 
   if (isLoading || !catalog) {
     return (
@@ -740,104 +655,114 @@ export default function ItemDetailPage() {
           {/* Main Content */}
           <div className="grid lg:grid-cols-2 gap-6 lg:gap-12">
             {/* Image Section */}
-            <PhotoProvider>
+            <PhotoProvider
+              {...{
+                visible: lightboxVisible,
+                onVisibleChange: (visible: boolean) => setLightboxVisible(visible),
+                index: lightboxIndex,
+                onIndexChange: (index: number) => setLightboxIndex(index),
+              } as any}
+            >
               <div className="space-y-4">
+                {/* Hidden PhotoViews to register all images for the lightbox gallery */}
+                <div style={{ display: 'none' }}>
+                  {allImages.map((img: any, idx: number) => (
+                    <PhotoView key={img.id || idx} src={img.url}>
+                      <img src={img.url} alt="" />
+                    </PhotoView>
+                  ))}
+                </div>
+                
                 {/* Main Image with Swipe Support */}
                 {hasImages ? (
-                  <>
-                    {/* Render all PhotoViews in correct order - only selected one is visible */}
-                    {images.map((img: any, idx: number) => (
-                      <PhotoView key={img.id || idx} src={img.url}>
-                        {selectedImageIndex === idx ? (
-                          <div 
-                            className="relative aspect-square bg-muted rounded-2xl overflow-hidden border shadow-lg select-none cursor-pointer"
-                          >
-                      <AnimatePresence initial={false} custom={direction} mode="popLayout">
-                        <motion.div
-                          key={selectedImageIndex}
-                          custom={direction}
-                          variants={slideVariants}
-                          initial="enter"
-                          animate="center"
-                          exit="exit"
-                          transition={{
-                            x: { type: "spring", stiffness: 300, damping: 30 },
-                            opacity: { duration: 0.2 },
-                          }}
-                          className="absolute inset-0"
-                        >
-                          <Image
-                            src={selectedImage.url}
-                            alt={item.name}
-                            fill
-                            className="object-cover pointer-events-none"
-                            priority
-                            draggable={false}
-                          />
-                        </motion.div>
-                      </AnimatePresence>
-                  
-                  {/* Navigation Arrows */}
-                  {images.length > 1 && (
-                    <>
-                      {/* Left Arrow */}
-                      <motion.button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          goToPrevImage()
-                        }}
-                        disabled={selectedImageIndex === 0}
-                        whileHover={{ scale: 1.1 }}
-                        whileTap={{ scale: 0.9 }}
-                        className={`absolute left-2 top-1/2 -translate-y-1/2 z-10 w-10 h-10 rounded-full bg-black/50 text-white flex items-center justify-center transition-opacity ${
-                          selectedImageIndex === 0 
-                            ? 'opacity-30 cursor-not-allowed' 
-                            : 'opacity-70 hover:opacity-100 hover:bg-black/70'
-                        }`}
-                      >
-                        <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                        </svg>
-                      </motion.button>
-                      
-                      {/* Right Arrow */}
-                      <motion.button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          goToNextImage()
-                        }}
-                        disabled={selectedImageIndex === images.length - 1}
-                        whileHover={{ scale: 1.1 }}
-                        whileTap={{ scale: 0.9 }}
-                        className={`absolute right-2 top-1/2 -translate-y-1/2 z-10 w-10 h-10 rounded-full bg-black/50 text-white flex items-center justify-center transition-opacity ${
-                          selectedImageIndex === images.length - 1 
-                            ? 'opacity-30 cursor-not-allowed' 
-                            : 'opacity-70 hover:opacity-100 hover:bg-black/70'
-                        }`}
-                      >
-                        <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                        </svg>
-                      </motion.button>
-                      
-                      {/* Image Counter Badge */}
-                      <motion.div 
+                  <div 
+                    className="relative aspect-square bg-muted rounded-2xl overflow-hidden border shadow-lg select-none"
+                  >
+                    {/* Single AnimatePresence for smooth transitions */}
+                    <AnimatePresence initial={false} custom={direction} mode="wait">
+                      <motion.div
                         key={selectedImageIndex}
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 px-3 py-1 bg-black/60 text-white text-sm font-medium rounded-full pointer-events-none"
+                        custom={direction}
+                        variants={slideVariants}
+                        initial="enter"
+                        animate="center"
+                        exit="exit"
+                        transition={{
+                          x: { type: "spring", stiffness: 300, damping: 30 },
+                          opacity: { duration: 0.2 },
+                        }}
+                        className="absolute inset-0 cursor-pointer"
+                        onClick={() => {
+                          setLightboxIndex(selectedImageIndex)
+                          setLightboxVisible(true)
+                        }}
                       >
-                        {selectedImagePosition} / {allImages.length}
+                        <Image
+                          src={selectedImage?.url}
+                          alt={item.name}
+                          fill
+                          className="object-cover pointer-events-none"
+                          priority
+                          draggable={false}
+                        />
                       </motion.div>
-                    </>
-                  )}
-                          </div>
-                        ) : (
-                          <div style={{ display: 'none' }} />
-                        )}
-                      </PhotoView>
-                    ))}
-                  </>
+                    </AnimatePresence>
+                  
+                    {/* Navigation Arrows */}
+                    {allImages.length > 1 && (
+                      <>
+                        {/* Left Arrow */}
+                        <motion.button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            goToPrevImage(allImages)
+                          }}
+                          disabled={selectedImageIndex === 0}
+                          whileHover={{ scale: 1.1 }}
+                          whileTap={{ scale: 0.9 }}
+                          className={`absolute left-2 top-1/2 -translate-y-1/2 z-10 w-10 h-10 rounded-full bg-black/50 text-white flex items-center justify-center transition-opacity ${
+                            selectedImageIndex === 0 
+                              ? 'opacity-30 cursor-not-allowed' 
+                              : 'opacity-70 hover:opacity-100 hover:bg-black/70'
+                          }`}
+                        >
+                          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                          </svg>
+                        </motion.button>
+                        
+                        {/* Right Arrow */}
+                        <motion.button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            goToNextImage(allImages)
+                          }}
+                          disabled={selectedImageIndex === allImages.length - 1}
+                          whileHover={{ scale: 1.1 }}
+                          whileTap={{ scale: 0.9 }}
+                          className={`absolute right-2 top-1/2 -translate-y-1/2 z-10 w-10 h-10 rounded-full bg-black/50 text-white flex items-center justify-center transition-opacity ${
+                            selectedImageIndex === allImages.length - 1 
+                              ? 'opacity-30 cursor-not-allowed' 
+                              : 'opacity-70 hover:opacity-100 hover:bg-black/70'
+                          }`}
+                        >
+                          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                          </svg>
+                        </motion.button>
+                        
+                        {/* Image Counter Badge */}
+                        <motion.div 
+                          key={`counter-${selectedImageIndex}`}
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 px-3 py-1 bg-black/60 text-white text-sm font-medium rounded-full pointer-events-none"
+                        >
+                          {selectedImageIndex + 1} / {allImages.length}
+                        </motion.div>
+                      </>
+                    )}
+                  </div>
                 ) : (
                   <div className="aspect-square bg-gradient-to-br from-muted to-muted/50 rounded-2xl flex flex-col items-center justify-center border shadow-lg">
                     <svg className="w-32 h-32 text-muted-foreground/30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -847,14 +772,11 @@ export default function ItemDetailPage() {
                   </div>
                 )}
 
-                {/* Image Thumbnails - Show all images, but indicate which are visible */}
+                {/* Image Thumbnails */}
                 {allImages.length > 1 && (
                   <div className="flex gap-2 overflow-x-auto pb-2">
                     {allImages.map((img: any, idx: number) => {
-                      // Find the index in filtered images if this image is visible
-                      const filteredIndex = images.findIndex((filteredImg: any) => filteredImg.id === img.id)
-                      const isVisible = filteredIndex !== -1
-                      const isSelected = isVisible && filteredIndex === selectedImageIndex
+                      const isSelected = idx === selectedImageIndex
                       
                       return (
                         <button
@@ -865,7 +787,6 @@ export default function ItemDetailPage() {
                               ? 'border-primary ring-2 ring-primary/20' 
                               : 'border-border hover:border-muted-foreground/50'
                           }`}
-                          title={!isVisible ? `Click to switch to variants: ${img.variantOptions ? Object.entries(img.variantOptions).map(([k, v]) => `${k}: ${v}`).join(', ') : 'No variants'}` : ''}
                         >
                           <Image
                             src={img.url}
@@ -896,7 +817,7 @@ export default function ItemDetailPage() {
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
-                      {images.length > 1 && (
+                      {allImages.length > 1 && (
                         <DropdownMenuItem onClick={handleOpenManageImages}>
                           <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8h16M4 16h16" />

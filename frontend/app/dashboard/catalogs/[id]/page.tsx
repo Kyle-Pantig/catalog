@@ -98,9 +98,23 @@ export default function CatalogDetailPage() {
     if (editImages.some(img => img.isNew)) return true
     
     // Check variantOptions changes
-    const currentVariantOptions = editImages.map(img => img.variantOptions || {})
-    const initialVariantOptions = initialEditState.imageVariantOptions || []
-    if (JSON.stringify(currentVariantOptions) !== JSON.stringify(initialVariantOptions)) return true
+    // Sort keys before comparing to handle key insertion order differences
+    const sortedStringify = (obj: any) => {
+      if (!obj || typeof obj !== 'object') return '{}'
+      const sortedKeys = Object.keys(obj).sort()
+      const sortedObj: Record<string, any> = {}
+      sortedKeys.forEach(key => { sortedObj[key] = obj[key] })
+      return JSON.stringify(sortedObj)
+    }
+    
+    const currentImageVariantOptions = editImages
+      .filter(img => !img.isNew)
+      .map(img => sortedStringify(img.variantOptions))
+      .join('|')
+    const initialImageVariantOptions = (initialEditState.imageVariantOptions || [])
+      .map((opts: any) => sortedStringify(opts))
+      .join('|')
+    if (currentImageVariantOptions !== initialImageVariantOptions) return true
     
     return false
   }, [editName, editDescription, editImages, editSpecifications, editVariants, initialEditState])
@@ -887,18 +901,28 @@ export default function CatalogDetailPage() {
                                         <select
                                           value={img.variantOptions?.[variant.name] || ''}
                                           onChange={(e) => {
-                                            const newImages = [...addImages]
-                                            if (!newImages[imgIndex].variantOptions) {
-                                              newImages[imgIndex].variantOptions = {}
-                                            }
-                                            if (e.target.value) {
-                                              newImages[imgIndex].variantOptions![variant.name] = e.target.value
-                                            } else {
-                                              delete newImages[imgIndex].variantOptions![variant.name]
-                                              if (Object.keys(newImages[imgIndex].variantOptions!).length === 0) {
-                                                delete newImages[imgIndex].variantOptions
+                                            const newImages = addImages.map((image, idx) => {
+                                              if (idx !== imgIndex) return image
+                                              
+                                              // Create a new image object to trigger React state change
+                                              const newImage = { ...image }
+                                              
+                                              if (e.target.value) {
+                                                // Add or update the variant option
+                                                newImage.variantOptions = {
+                                                  ...(newImage.variantOptions || {}),
+                                                  [variant.name]: e.target.value
+                                                }
+                                              } else {
+                                                // Remove the variant option
+                                                if (newImage.variantOptions) {
+                                                  const { [variant.name]: removed, ...rest } = newImage.variantOptions
+                                                  newImage.variantOptions = Object.keys(rest).length > 0 ? rest : undefined
+                                                }
                                               }
-                                            }
+                                              
+                                              return newImage
+                                            })
                                             setAddImages(newImages)
                                           }}
                                           className="w-full text-xs rounded-md border border-input bg-background px-2 py-1.5 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
@@ -1287,18 +1311,28 @@ export default function CatalogDetailPage() {
                                       <select
                                         value={img.variantOptions?.[variant.name] || ''}
                                         onChange={(e) => {
-                                          const newImages = [...editImages]
-                                          if (!newImages[imgIndex].variantOptions) {
-                                            newImages[imgIndex].variantOptions = {}
-                                          }
-                                          if (e.target.value) {
-                                            newImages[imgIndex].variantOptions![variant.name] = e.target.value
-                                          } else {
-                                            delete newImages[imgIndex].variantOptions![variant.name]
-                                            if (Object.keys(newImages[imgIndex].variantOptions!).length === 0) {
-                                              delete newImages[imgIndex].variantOptions
+                                          const newImages = editImages.map((image, idx) => {
+                                            if (idx !== imgIndex) return image
+                                            
+                                            // Create a new image object to trigger React state change
+                                            const newImage = { ...image }
+                                            
+                                            if (e.target.value) {
+                                              // Add or update the variant option
+                                              newImage.variantOptions = {
+                                                ...(newImage.variantOptions || {}),
+                                                [variant.name]: e.target.value
+                                              }
+                                            } else {
+                                              // Remove the variant option
+                                              if (newImage.variantOptions) {
+                                                const { [variant.name]: removed, ...rest } = newImage.variantOptions
+                                                newImage.variantOptions = Object.keys(rest).length > 0 ? rest : undefined
+                                              }
                                             }
-                                          }
+                                            
+                                            return newImage
+                                          })
                                           setEditImages(newImages)
                                         }}
                                         className="w-full text-xs rounded-md border border-input bg-background px-2 py-1.5 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"

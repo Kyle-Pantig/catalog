@@ -47,13 +47,40 @@ export default function ViewItemDetailPage() {
   }, [code, itemId, router])
 
   // Handle variant selection (user interaction)
-  const handleVariantSelect = useCallback((variantName: string, optionValue: string) => {
+  const handleVariantSelect = useCallback((variantName: string, optionValue: string, images?: any[]) => {
     const newSelections = { ...selectedVariants, [variantName]: optionValue }
     setSelectedVariants(newSelections)
     updateVariantUrl(newSelections)
-    // Reset image index when variants change
-    setSelectedImageIndex(0)
-    setPage([0, 0])
+    
+    // Find an image that matches ALL selected variants (best match)
+    if (images && images.length > 0) {
+      // First, try to find an image that matches ALL selected variants
+      let bestMatchIndex = images.findIndex((img: any) => {
+        if (!img.variantOptions || Object.keys(img.variantOptions).length === 0) return false
+        // Check if ALL of the image's variant options match the selected variants
+        return Object.entries(img.variantOptions).every(([key, value]) => {
+          return newSelections[key] === value
+        })
+      })
+      
+      // If no exact match, find an image that at least matches the newly selected variant
+      if (bestMatchIndex === -1) {
+        bestMatchIndex = images.findIndex((img: any) => {
+          if (!img.variantOptions) return false
+          return img.variantOptions[variantName] === optionValue
+        })
+      }
+      
+      if (bestMatchIndex !== -1) {
+        // Navigate to the matching image
+        setSelectedImageIndex(bestMatchIndex)
+        setPage([0, 0])
+        return
+      }
+    }
+    
+    // If no matching image found, keep current image (don't reset)
+    // This is better UX when there's no image for the selected combination
   }, [selectedVariants, updateVariantUrl])
 
   useEffect(() => {
@@ -646,7 +673,7 @@ export default function ViewItemDetailPage() {
                               return (
                                 <button
                                   key={optIndex}
-                                  onClick={() => handleVariantSelect(variant.name, optionValue)}
+                                  onClick={() => handleVariantSelect(variant.name, optionValue, allImages)}
                                   className={`px-3 py-1.5 text-sm rounded-full border transition-all ${
                                     selectedVariants[variant.name] === optionValue
                                       ? 'bg-primary text-primary-foreground border-primary'

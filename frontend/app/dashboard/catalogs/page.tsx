@@ -28,6 +28,7 @@ import { catalogApi } from '@/lib/api'
 import { toast } from 'sonner'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
+import { uploadImage } from '@/lib/storage'
 
 type ViewMode = 'list' | 'board'
 
@@ -37,13 +38,18 @@ export default function CatalogsPage() {
   const [open, setOpen] = useState(false)
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
+  const [coverPhotoFile, setCoverPhotoFile] = useState<File | null>(null)
+  const [coverPhotoPreview, setCoverPhotoPreview] = useState<string | null>(null)
   const [viewMode, setViewMode] = useState<ViewMode>('list')
   const [editOpen, setEditOpen] = useState(false)
   const [editingCatalog, setEditingCatalog] = useState<any>(null)
   const [editTitle, setEditTitle] = useState('')
   const [editDescription, setEditDescription] = useState('')
+  const [editCoverPhotoFile, setEditCoverPhotoFile] = useState<File | null>(null)
+  const [editCoverPhotoPreview, setEditCoverPhotoPreview] = useState<string | null>(null)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [deletingCatalog, setDeletingCatalog] = useState<any>(null)
+  const [uploadingCoverPhoto, setUploadingCoverPhoto] = useState(false)
 
   useEffect(() => {
     const checkAuth = async () => {
@@ -66,25 +72,62 @@ export default function CatalogsPage() {
 
   const createMutation = useMutation({
     mutationFn: async () => {
+      let coverPhotoUrl: string | undefined = undefined
+      
+      // Upload cover photo if provided
+      if (coverPhotoFile) {
+        setUploadingCoverPhoto(true)
+        // We need a temporary catalog ID, but we can't get it until after creation
+        // So we'll create the catalog first, then update it with the cover photo
+        const { data: catalogData, error } = await catalogApi.create(title, description)
+        if (error) throw new Error(error.detail)
+        if (!catalogData || typeof catalogData !== 'object' || !('id' in catalogData)) {
+          throw new Error('Failed to create catalog')
+        }
+        const catalogId = (catalogData as { id: string }).id
+        
+        // Upload cover photo
+        const { url, error: uploadError } = await uploadImage(coverPhotoFile, catalogId)
+        if (uploadError) {
+          // Catalog was created but cover photo upload failed
+          console.error('Cover photo upload failed:', uploadError)
+          toast.warning('Catalog created but cover photo upload failed')
+        } else if (url) {
+          // Update catalog with cover photo URL
+          const { error: updateError } = await catalogApi.update(catalogId, { coverPhoto: url })
+          if (updateError) {
+            console.error('Failed to update catalog with cover photo:', updateError)
+          }
+        }
+        setUploadingCoverPhoto(false)
+        return catalogData
+      } else {
       const { data, error } = await catalogApi.create(title, description)
       if (error) throw new Error(error.detail)
       return data
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['catalogs'] })
       setOpen(false)
       setTitle('')
       setDescription('')
+      setCoverPhotoFile(null)
+      if (coverPhotoPreview) {
+        URL.revokeObjectURL(coverPhotoPreview)
+        setCoverPhotoPreview(null)
+      }
       toast.success('Catalog created successfully!')
     },
     onError: (error: Error) => {
+      setUploadingCoverPhoto(false)
       toast.error(error.message)
     },
   })
 
   const updateMutation = useMutation({
-    mutationFn: async ({ id, title, description }: { id: string; title?: string; description?: string }) => {
-      const { data, error } = await catalogApi.update(id, { title, description })
+    mutationFn: async ({ id, title, description, coverPhoto }: { id: string; title?: string; description?: string; coverPhoto?: string }) => {
+      const { data, error } = await catalogApi.update(id, { title, description, coverPhoto })
       if (error) throw new Error(error.detail)
       return data
     },
@@ -94,9 +137,15 @@ export default function CatalogsPage() {
       setEditingCatalog(null)
       setEditTitle('')
       setEditDescription('')
+      setEditCoverPhotoFile(null)
+      if (editCoverPhotoPreview) {
+        URL.revokeObjectURL(editCoverPhotoPreview)
+        setEditCoverPhotoPreview(null)
+      }
       toast.success('Catalog updated successfully!')
     },
     onError: (error: Error) => {
+      setUploadingCoverPhoto(false)
       toast.error(error.message)
     },
   })
@@ -122,7 +171,85 @@ export default function CatalogsPage() {
     setEditingCatalog(catalog)
     setEditTitle(catalog.title)
     setEditDescription(catalog.description || '')
+    setEditCoverPhotoPreview(catalog.coverPhoto || null)
+    setEditCoverPhotoFile(null)
     setEditOpen(true)
+  }
+
+  const handleCoverPhotoChange = (e: React.ChangeEvent<HTMLInputElement>, isEdit: boolean = false) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    // Validate file type
+    if (!file.type.startsWith('image/')) {
+      toast.error('Please select an image file')
+      return
+    }
+
+    // Create preview
+    const preview = URL.createObjectURL(file)
+    if (isEdit) {
+      setEditCoverPhotoFile(file)
+      if (editCoverPhotoPreview && !editCoverPhotoPreview.startsWith('http')) {
+        URL.revokeObjectURL(editCoverPhotoPreview)
+      }
+      setEditCoverPhotoPreview(preview)
+    } else {
+      setCoverPhotoFile(file)
+      if (coverPhotoPreview) {
+        URL.revokeObjectURL(coverPhotoPreview)
+      }
+      setCoverPhotoPreview(preview)
+    }
+  }
+
+  const handleRemoveCoverPhoto = (isEdit: boolean = false) => {
+    if (isEdit) {
+      setEditCoverPhotoFile(null)
+      if (editCoverPhotoPreview) {
+        if (!editCoverPhotoPreview.startsWith('http')) {
+          URL.revokeObjectURL(editCoverPhotoPreview)
+        }
+        setEditCoverPhotoPreview(null)
+      }
+    } else {
+      setCoverPhotoFile(null)
+      if (coverPhotoPreview) {
+        URL.revokeObjectURL(coverPhotoPreview)
+        setCoverPhotoPreview(null)
+      }
+    }
+  }
+
+  const handleUpdateCatalog = async () => {
+    if (!editingCatalog) return
+
+    let coverPhotoUrl: string | undefined = editingCatalog.coverPhoto
+
+    // Upload new cover photo if provided
+    if (editCoverPhotoFile) {
+      setUploadingCoverPhoto(true)
+      const { url, error: uploadError } = await uploadImage(editCoverPhotoFile, editingCatalog.id)
+      if (uploadError) {
+        toast.error('Failed to upload cover photo')
+        setUploadingCoverPhoto(false)
+        return
+      }
+      if (url) {
+        coverPhotoUrl = url
+      }
+      setUploadingCoverPhoto(false)
+    } else if (editCoverPhotoPreview === null && editingCatalog.coverPhoto) {
+      // Cover photo was removed
+      coverPhotoUrl = ''
+    }
+
+    updateMutation.mutate({ 
+      id: editingCatalog.id, 
+      title: editTitle, 
+      description: editDescription,
+      coverPhoto: coverPhotoUrl
+    })
   }
 
   return (
@@ -209,6 +336,52 @@ export default function CatalogsPage() {
                     }}
                   />
                 </div>
+                <div className="space-y-2">
+                  <label htmlFor="catalog-cover-photo" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                    Cover Photo
+                  </label>
+                  {coverPhotoPreview ? (
+                    <div className="relative w-full h-48 rounded-lg overflow-hidden border-2">
+                      <Image
+                        src={coverPhotoPreview}
+                        alt="Cover preview"
+                        fill
+                        className="object-cover"
+                        unoptimized
+                      />
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        size="sm"
+                        className="absolute top-2 right-2"
+                        onClick={() => handleRemoveCoverPhoto(false)}
+                      >
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="border-2 border-dashed rounded-lg p-4">
+                      <input
+                        id="catalog-cover-photo"
+                        type="file"
+                        accept="image/*"
+                        onChange={(e) => handleCoverPhotoChange(e, false)}
+                        className="hidden"
+                      />
+                      <label
+                        htmlFor="catalog-cover-photo"
+                        className="flex flex-col items-center justify-center cursor-pointer"
+                      >
+                        <svg className="w-8 h-8 text-muted-foreground mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                        </svg>
+                        <span className="text-sm text-muted-foreground">Click to upload cover photo</span>
+                      </label>
+                    </div>
+                  )}
+                </div>
               </div>
               <SheetFooter className="border-t pt-4 mt-4">
                 <Button
@@ -217,16 +390,21 @@ export default function CatalogsPage() {
                     setOpen(false)
                     setTitle('')
                     setDescription('')
+                    setCoverPhotoFile(null)
+                    if (coverPhotoPreview) {
+                      URL.revokeObjectURL(coverPhotoPreview)
+                      setCoverPhotoPreview(null)
+                    }
                   }}
-                  disabled={createMutation.isPending}
+                  disabled={createMutation.isPending || uploadingCoverPhoto}
                 >
                   Cancel
                 </Button>
                 <Button
                   onClick={() => createMutation.mutate()}
-                  disabled={!title || createMutation.isPending}
+                  disabled={!title || createMutation.isPending || uploadingCoverPhoto}
                 >
-                  {createMutation.isPending ? 'Creating...' : 'Create'}
+                  {createMutation.isPending || uploadingCoverPhoto ? 'Creating...' : 'Create'}
                 </Button>
               </SheetFooter>
             </SheetContent>
@@ -251,7 +429,7 @@ export default function CatalogsPage() {
                     placeholder="Catalog title"
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && editTitle && !updateMutation.isPending) {
-                        updateMutation.mutate({ id: editingCatalog?.id, title: editTitle, description: editDescription })
+                        handleUpdateCatalog()
                       }
                     }}
                   />
@@ -267,10 +445,56 @@ export default function CatalogsPage() {
                     placeholder="Catalog description"
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && editTitle && !updateMutation.isPending) {
-                        updateMutation.mutate({ id: editingCatalog?.id, title: editTitle, description: editDescription })
+                        handleUpdateCatalog()
                       }
                     }}
                   />
+                </div>
+                <div className="space-y-2">
+                  <label htmlFor="edit-catalog-cover-photo" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                    Cover Photo
+                  </label>
+                  {editCoverPhotoPreview ? (
+                    <div className="relative w-full h-48 rounded-lg overflow-hidden border-2">
+                      <Image
+                        src={editCoverPhotoPreview}
+                        alt="Cover preview"
+                        fill
+                        className="object-cover"
+                        unoptimized
+                      />
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        size="sm"
+                        className="absolute top-2 right-2"
+                        onClick={() => handleRemoveCoverPhoto(true)}
+                      >
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="border-2 border-dashed rounded-lg p-4">
+                      <input
+                        id="edit-catalog-cover-photo"
+                        type="file"
+                        accept="image/*"
+                        onChange={(e) => handleCoverPhotoChange(e, true)}
+                        className="hidden"
+                      />
+                      <label
+                        htmlFor="edit-catalog-cover-photo"
+                        className="flex flex-col items-center justify-center cursor-pointer"
+                      >
+                        <svg className="w-8 h-8 text-muted-foreground mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                        </svg>
+                        <span className="text-sm text-muted-foreground">Click to upload cover photo</span>
+                      </label>
+                    </div>
+                  )}
                 </div>
               </div>
               <SheetFooter className="border-t pt-4 mt-4">
@@ -281,20 +505,29 @@ export default function CatalogsPage() {
                     setEditingCatalog(null)
                     setEditTitle('')
                     setEditDescription('')
+                    setEditCoverPhotoFile(null)
+                    if (editCoverPhotoPreview && !editCoverPhotoPreview.startsWith('http')) {
+                      URL.revokeObjectURL(editCoverPhotoPreview)
+                    }
+                    setEditCoverPhotoPreview(null)
                   }}
-                  disabled={updateMutation.isPending}
+                  disabled={updateMutation.isPending || uploadingCoverPhoto}
                 >
                   Cancel
                 </Button>
                 <Button
-                  onClick={() => updateMutation.mutate({ id: editingCatalog?.id, title: editTitle, description: editDescription })}
+                  onClick={handleUpdateCatalog}
                   disabled={
                     !editTitle || 
                     updateMutation.isPending || 
-                    (editTitle === editingCatalog?.title && editDescription === (editingCatalog?.description || ''))
+                    uploadingCoverPhoto ||
+                    (editTitle === editingCatalog?.title && 
+                     editDescription === (editingCatalog?.description || '') &&
+                     !editCoverPhotoFile &&
+                     editCoverPhotoPreview === (editingCatalog?.coverPhoto || null))
                   }
                 >
-                  {updateMutation.isPending ? 'Updating...' : 'Update'}
+                  {updateMutation.isPending || uploadingCoverPhoto ? 'Updating...' : 'Update'}
                 </Button>
               </SheetFooter>
             </SheetContent>
@@ -324,7 +557,8 @@ export default function CatalogsPage() {
               <Card className="hidden md:block">
                 <div className="p-6">
                   <div className="space-y-3">
-                    <div className="grid grid-cols-5 gap-4 pb-3 border-b">
+                    <div className="grid grid-cols-6 gap-4 pb-3 border-b">
+                      <Skeleton className="h-5 w-16" />
                       <Skeleton className="h-5 w-20" />
                       <Skeleton className="h-5 w-24" />
                       <Skeleton className="h-5 w-16" />
@@ -332,7 +566,8 @@ export default function CatalogsPage() {
                       <Skeleton className="h-5 w-16" />
                     </div>
                     {[...Array(5)].map((_, i) => (
-                      <div key={i} className="grid grid-cols-5 gap-4 py-3 border-b last:border-0">
+                      <div key={i} className="grid grid-cols-6 gap-4 py-3 border-b last:border-0">
+                        <Skeleton className="h-12 w-16" />
                         <Skeleton className="h-5 w-32" />
                         <Skeleton className="h-5 w-40" />
                         <Skeleton className="h-5 w-12" />
@@ -368,9 +603,21 @@ export default function CatalogsPage() {
             {/* Mobile View - Cards */}
             <div className="md:hidden space-y-4">
               {catalogs.map((catalog: any) => (
-                <Card key={catalog.id} className="border-2 hover:shadow-lg transition-shadow">
-                  <CardHeader className="relative">
-                    <div className="absolute top-4 right-4">
+                <Card key={catalog.id} className="border-2 hover:shadow-lg transition-shadow overflow-hidden">
+                  {catalog.coverPhoto && (
+                    <div className="relative w-full h-32">
+                      <Image
+                        src={catalog.coverPhoto}
+                        alt={catalog.title}
+                        fill
+                        className="object-cover"
+                        unoptimized
+                      />
+                      <div className="absolute inset-0 bg-gradient-to-t from-background/80 via-background/40 to-transparent" />
+                    </div>
+                  )}
+                  <CardHeader className={`relative ${catalog.coverPhoto ? 'pt-4' : ''}`}>
+                    <div className="absolute top-4 right-4 z-10">
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
@@ -443,6 +690,7 @@ export default function CatalogsPage() {
                 <Table>
                   <TableHeader>
                     <TableRow>
+                      <TableHead className="w-20">Cover</TableHead>
                       <TableHead>Title</TableHead>
                       <TableHead>Description</TableHead>
                       <TableHead>Items</TableHead>
@@ -453,6 +701,25 @@ export default function CatalogsPage() {
                   <TableBody>
                     {catalogs.map((catalog: any) => (
                       <TableRow key={catalog.id}>
+                        <TableCell>
+                          {catalog.coverPhoto ? (
+                            <div className="relative w-16 h-12 rounded-md overflow-hidden border">
+                              <Image
+                                src={catalog.coverPhoto}
+                                alt={catalog.title}
+                                fill
+                                className="object-cover"
+                                unoptimized
+                              />
+                            </div>
+                          ) : (
+                            <div className="w-16 h-12 rounded-md border bg-muted flex items-center justify-center">
+                              <svg className="w-6 h-6 text-muted-foreground/30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={0.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                              </svg>
+                            </div>
+                          )}
+                        </TableCell>
                         <TableCell className="font-medium">{catalog.title}</TableCell>
                         <TableCell className="max-w-md">
                           <span className="truncate block">{catalog.description || '-'}</span>
@@ -522,9 +789,21 @@ export default function CatalogsPage() {
             {viewMode === 'board' && (
               <div className="hidden md:grid md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                 {catalogs.map((catalog: any) => (
-                  <Card key={catalog.id} className="border-2 hover:shadow-lg transition-shadow flex flex-col">
-                    <CardHeader className="relative">
-                      <div className="absolute top-4 right-4">
+                  <Card key={catalog.id} className="border-2 hover:shadow-lg transition-shadow flex flex-col overflow-hidden">
+                    {catalog.coverPhoto && (
+                      <div className="relative w-full h-40">
+                        <Image
+                          src={catalog.coverPhoto}
+                          alt={catalog.title}
+                          fill
+                          className="object-cover"
+                          unoptimized
+                        />
+                        <div className="absolute inset-0 bg-gradient-to-t from-background/80 via-background/40 to-transparent" />
+                      </div>
+                    )}
+                    <CardHeader className={`relative ${catalog.coverPhoto ? 'pt-4' : ''}`}>
+                      <div className="absolute top-4 right-4 z-10">
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button variant="ghost" size="sm" className="h-8 w-8 p-0">

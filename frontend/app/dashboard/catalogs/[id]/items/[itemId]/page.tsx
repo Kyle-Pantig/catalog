@@ -56,6 +56,9 @@ export default function ItemDetailPage() {
     const newSelections = { ...selectedVariants, [variantName]: optionValue }
     setSelectedVariants(newSelections)
     updateVariantUrl(newSelections)
+    // Reset image index when variants change
+    setSelectedImageIndex(0)
+    setPage([0, 0])
   }, [selectedVariants, updateVariantUrl])
 
   // Edit Item state
@@ -74,6 +77,7 @@ export default function ItemDetailPage() {
     name: string
     description: string
     imageIds: string[]
+    imageVariantOptions: Record<string, string>[]
     specifications: string
     variants: string
   } | null>(null)
@@ -112,6 +116,18 @@ export default function ItemDetailPage() {
     // Check if any new images were added
     if (editImages.some(img => img.isNew)) return true
     
+    // Check if variantOptions on images have changed
+    const currentImageVariantOptions = editImages
+      .filter(img => !img.isNew)
+      .map(img => JSON.stringify(img.variantOptions || {}))
+      .sort()
+      .join('|')
+    const initialImageVariantOptions = (initialEditState.imageVariantOptions || [])
+      .map((opts: any) => JSON.stringify(opts || {}))
+      .sort()
+      .join('|')
+    if (currentImageVariantOptions !== initialImageVariantOptions) return true
+    
     return false
   }, [editName, editDescription, editImages, editSpecifications, editVariants, initialEditState])
 
@@ -144,7 +160,42 @@ export default function ItemDetailPage() {
   const catalog = (catalogs as any[])?.find((c: any) => c.id === catalogId)
   const item = catalog?.items?.find((i: any) => i.id === itemId)
 
-  const totalImages = item?.images?.length || 0
+  // Filter images based on selected variants
+  const filteredImages = useMemo(() => {
+    if (!item?.images) return []
+    
+    const images = item.images
+    
+    // If no variants selected or item has no variants, return all images
+    if (!item.variants || item.variants.length === 0 || Object.keys(selectedVariants).length === 0) {
+      // Return images without variant options first, then images with variant options
+      const withoutVariants = images.filter((img: any) => !img.variantOptions || Object.keys(img.variantOptions || {}).length === 0)
+      const withVariants = images.filter((img: any) => img.variantOptions && Object.keys(img.variantOptions).length > 0)
+      return [...withoutVariants, ...withVariants]
+    }
+    
+    // Filter images that match selected variants
+    const matchingImages = images.filter((img: any) => {
+      if (!img.variantOptions || Object.keys(img.variantOptions).length === 0) {
+        // Images without variant options are always shown
+        return true
+      }
+      
+      // Check if image's variant options match selected variants
+      const imgVariants = img.variantOptions || {}
+      return Object.keys(selectedVariants).every(variantName => {
+        const selectedValue = selectedVariants[variantName]
+        const imgValue = imgVariants[variantName]
+        // If image has this variant, it must match; if not, it's okay
+        return !imgValue || imgValue === selectedValue
+      })
+    })
+    
+    // If we have matching images, return them; otherwise return all images
+    return matchingImages.length > 0 ? matchingImages : images
+  }, [item?.images, selectedVariants])
+
+  const totalImages = filteredImages.length || 0
 
   // Auto-select variant options on load (from URL params or default to first)
   useEffect(() => {
@@ -229,7 +280,7 @@ export default function ItemDetailPage() {
   }, [selectedImageIndex, page])
 
   const updateItemMutation = useMutation({
-    mutationFn: async ({ itemData }: { itemData: { name?: string; description?: string; images?: string[]; specifications?: { label: string; value: string }[]; variants?: { name: string; options: { value: string; specifications?: { label: string; value: string }[] }[] }[] } }) => {
+    mutationFn: async ({ itemData }: { itemData: { name?: string; description?: string; images?: string[] | Array<{ url: string; order?: number; variantOptions?: Record<string, string> }>; specifications?: { label: string; value: string }[]; variants?: { name: string; options: { value: string; specifications?: { label: string; value: string }[] }[] }[] } }) => {
       const { data, error } = await catalogApi.updateItem(catalogId, itemId, itemData)
       if (error) throw new Error(error.detail)
       return data
@@ -384,14 +435,26 @@ export default function ItemDetailPage() {
         newUrls = urls
       }
 
-      // Reconstruct final URL array in correct order
-      const finalUrls = imageOrder.map(item => {
-        if (item.type === 'existing') {
-          return existingUrls[item.index]
-        } else {
-          return newUrls[item.index]
+      // Reconstruct final image data array in correct order with variantOptions
+      const finalImages = imageOrder.map((orderItem, idx) => {
+        const imageItem = editImages.find((img, i) => {
+          if (orderItem.type === 'existing') {
+            return !img.isNew && img.url === existingUrls[orderItem.index]
+          } else {
+            return img.isNew && filesToUpload[orderItem.index] === img.file
+          }
+        })
+        
+        const url = orderItem.type === 'existing' 
+          ? existingUrls[orderItem.index] 
+          : newUrls[orderItem.index]
+        
+        return {
+          url,
+          order: idx,
+          variantOptions: imageItem?.variantOptions || undefined,
         }
-      }).filter(Boolean)
+      }).filter(img => img.url)
 
       // Filter out empty specifications
       const validSpecs = editSpecifications.filter(s => s.label.trim() && s.value.trim())
@@ -413,8 +476,8 @@ export default function ItemDetailPage() {
         itemData: {
           name: editName,
           description: editDescription.trim() || undefined,
-          images: finalUrls,
-          specifications: validSpecs,
+          images: finalImages.length > 0 ? finalImages : undefined,
+          specifications: validSpecs.length > 0 ? validSpecs : undefined,
           variants: validVariants,
         },
       })
@@ -447,15 +510,18 @@ export default function ItemDetailPage() {
         url: img.url,
         order: img.order,
         isNew: false,
+        variantOptions: img.variantOptions || undefined,
       })) || [])
       setEditSpecifications(specs.length > 0 ? specs : [])
       setEditVariants(convertedVars.length > 0 ? convertedVars : [])
       
       // Store initial state for change detection
+      const initialImageVariantOptions = item.images?.map((img: any) => img.variantOptions || {}) || []
       setInitialEditState({
         name: item.name,
         description: item.description || '',
         imageIds: imageIds,
+        imageVariantOptions: initialImageVariantOptions,
         specifications: JSON.stringify(specs),
         variants: JSON.stringify(vars),
       })
@@ -490,10 +556,77 @@ export default function ItemDetailPage() {
     reorderImagesMutation.mutate(imageOrders)
   }
 
-  // Get images from item
-  const images = item?.images || []
+  // Get images from item (filtered by variants for main display)
+  const images = filteredImages
   const hasImages = images.length > 0
   const selectedImage = hasImages ? images[selectedImageIndex] : null
+  
+  // For thumbnails, always show all images so users can see all available images
+  const allImages = item?.images || []
+  
+  // Get the actual position of the selected image in all images
+  const selectedImagePosition = useMemo(() => {
+    if (!selectedImage || !allImages.length) return 0
+    const position = allImages.findIndex((img: any) => img.id === selectedImage.id)
+    return position !== -1 ? position + 1 : 0
+  }, [selectedImage, allImages])
+
+  // Handle clicking on a thumbnail image - switch variants if needed
+  const handleThumbnailClick = useCallback((img: any, allImagesIndex: number) => {
+    if (!item?.images) return
+    
+    const filteredIndex = images.findIndex((filteredImg: any) => filteredImg.id === img.id)
+    const isVisible = filteredIndex !== -1
+    
+    if (isVisible) {
+      // Image is already visible, just switch to it
+      goToImage(filteredIndex)
+    } else {
+      // Image is not visible - switch variants to make it visible
+      if (img.variantOptions && Object.keys(img.variantOptions).length > 0) {
+        // Update selected variants to match this image's variant options
+        const newSelections = { ...selectedVariants }
+        Object.entries(img.variantOptions).forEach(([variantName, optionValue]) => {
+          newSelections[variantName] = optionValue as string
+        })
+        
+        // Calculate what the filtered images will be with new selections
+        const newFilteredImages = item.images.filter((filteredImg: any) => {
+          if (!filteredImg.variantOptions || Object.keys(filteredImg.variantOptions).length === 0) {
+            return true
+          }
+          const imgVariants = filteredImg.variantOptions || {}
+          return Object.keys(newSelections).every(variantName => {
+            const selectedValue = newSelections[variantName]
+            const imgValue = imgVariants[variantName]
+            return !imgValue || imgValue === selectedValue
+          })
+        })
+        
+        // Find the target image index in the new filtered list
+        const targetIndex = newFilteredImages.findIndex((filteredImg: any) => filteredImg.id === img.id)
+        
+        // Update variants and navigate to the image
+        setSelectedVariants(newSelections)
+        updateVariantUrl(newSelections)
+        setIsInitialLoad(false)
+        
+        // Navigate to the image after a brief delay to allow state update
+        if (targetIndex !== -1) {
+          setTimeout(() => {
+            setSelectedImageIndex(targetIndex)
+            setPage([0, 0])
+          }, 100)
+        }
+      } else {
+        // Image has no variant options, should always be visible
+        const foundIndex = images.findIndex((filteredImg: any) => filteredImg.id === img.id)
+        if (foundIndex !== -1) {
+          goToImage(foundIndex)
+        }
+      }
+    }
+  }, [images, selectedVariants, updateVariantUrl, goToImage, item])
 
   if (isLoading || !catalog) {
     return (
@@ -694,7 +827,7 @@ export default function ItemDetailPage() {
                         animate={{ opacity: 1, y: 0 }}
                         className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 px-3 py-1 bg-black/60 text-white text-sm font-medium rounded-full pointer-events-none"
                       >
-                        {selectedImageIndex + 1} / {images.length}
+                        {selectedImagePosition} / {allImages.length}
                       </motion.div>
                     </>
                   )}
@@ -714,27 +847,35 @@ export default function ItemDetailPage() {
                   </div>
                 )}
 
-                {/* Image Thumbnails */}
-                {images.length > 1 && (
+                {/* Image Thumbnails - Show all images, but indicate which are visible */}
+                {allImages.length > 1 && (
                   <div className="flex gap-2 overflow-x-auto pb-2">
-                    {images.map((img: any, idx: number) => (
-                      <button
-                        key={img.id || idx}
-                        onClick={() => goToImage(idx)}
-                        className={`relative w-16 h-16 md:w-20 md:h-20 flex-shrink-0 rounded-lg overflow-hidden border-2 transition-all cursor-pointer ${
-                          selectedImageIndex === idx 
-                            ? 'border-primary ring-2 ring-primary/20' 
-                            : 'border-border hover:border-muted-foreground/50'
-                        }`}
-                      >
-                        <Image
-                          src={img.url}
-                          alt={`${item.name} - ${idx + 1}`}
-                          fill
-                          className="object-cover"
-                        />
-                      </button>
-                    ))}
+                    {allImages.map((img: any, idx: number) => {
+                      // Find the index in filtered images if this image is visible
+                      const filteredIndex = images.findIndex((filteredImg: any) => filteredImg.id === img.id)
+                      const isVisible = filteredIndex !== -1
+                      const isSelected = isVisible && filteredIndex === selectedImageIndex
+                      
+                      return (
+                        <button
+                          key={img.id || idx}
+                          onClick={() => handleThumbnailClick(img, idx)}
+                          className={`relative w-16 h-16 md:w-20 md:h-20 flex-shrink-0 rounded-lg overflow-hidden border-2 transition-all cursor-pointer ${
+                            isSelected
+                              ? 'border-primary ring-2 ring-primary/20' 
+                              : 'border-border hover:border-muted-foreground/50'
+                          }`}
+                          title={!isVisible ? `Click to switch to variants: ${img.variantOptions ? Object.entries(img.variantOptions).map(([k, v]) => `${k}: ${v}`).join(', ') : 'No variants'}` : ''}
+                        >
+                          <Image
+                            src={img.url}
+                            alt={`${item.name} - ${idx + 1}`}
+                            fill
+                            className="object-cover"
+                          />
+                        </button>
+                      )
+                    })}
                   </div>
                 )}
               </div>
@@ -1174,14 +1315,99 @@ export default function ItemDetailPage() {
               />
             </div>
             {editImages.length > 0 && (
-              <div className="space-y-2">
-                <label className="text-sm font-medium">All Images (drag to reorder)</label>
-                <SortableImageGrid
-                  images={editImages}
-                  onReorder={setEditImages}
-                  onRemove={handleRemoveEditImage}
-                  columns={3}
-                />
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">All Images (drag to reorder)</label>
+                  <SortableImageGrid
+                    images={editImages}
+                    onReorder={setEditImages}
+                    onRemove={handleRemoveEditImage}
+                    columns={3}
+                  />
+                </div>
+                {/* Assign variant options to images */}
+                {editVariants.length > 0 && (
+                  <div className="space-y-3 border-t pt-4">
+                    <div className="flex items-center justify-between">
+                      <label className="text-sm font-medium">Assign Images to Variant Options</label>
+                      <span className="text-xs text-muted-foreground">(optional)</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Assign images to specific variant options. When a customer selects that option, they'll see the assigned image.
+                    </p>
+                    <div className="space-y-3">
+                      {editImages.map((img, imgIndex) => (
+                        <div key={img.id} className="border rounded-lg p-3 space-y-2">
+                          <div className="flex items-center gap-3">
+                            <div className="relative w-16 h-16 rounded-md overflow-hidden border flex-shrink-0">
+                              <Image
+                                src={img.url}
+                                alt={`Image ${imgIndex + 1}`}
+                                fill
+                                className="object-cover"
+                                unoptimized
+                              />
+                            </div>
+                            <div className="flex-1 space-y-2">
+                              <div className="text-xs font-medium">Image {imgIndex + 1}</div>
+                              {editVariants.map((variant) => {
+                                // Check which options are already assigned to other images
+                                const isOptionAssigned = (optionValue: string) => {
+                                  return editImages.some((otherImg, otherIdx) => 
+                                    otherIdx !== imgIndex && 
+                                    otherImg.variantOptions?.[variant.name] === optionValue
+                                  )
+                                }
+                                
+                                return (
+                                  <div key={variant.name} className="space-y-1">
+                                    <label className="text-xs text-muted-foreground">{variant.name}</label>
+                                    <select
+                                      value={img.variantOptions?.[variant.name] || ''}
+                                      onChange={(e) => {
+                                        const newImages = [...editImages]
+                                        if (!newImages[imgIndex].variantOptions) {
+                                          newImages[imgIndex].variantOptions = {}
+                                        }
+                                        if (e.target.value) {
+                                          newImages[imgIndex].variantOptions![variant.name] = e.target.value
+                                        } else {
+                                          delete newImages[imgIndex].variantOptions![variant.name]
+                                          if (Object.keys(newImages[imgIndex].variantOptions!).length === 0) {
+                                            delete newImages[imgIndex].variantOptions
+                                          }
+                                        }
+                                        setEditImages(newImages)
+                                      }}
+                                      className="w-full text-xs rounded-md border border-input bg-background px-2 py-1.5 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                    >
+                                      <option value="">None (show for all)</option>
+                                      {variant.options.map((option) => {
+                                        const isAssigned = isOptionAssigned(option.value)
+                                        const isCurrentSelection = img.variantOptions?.[variant.name] === option.value
+                                        const isDisabled = isAssigned && !isCurrentSelection
+                                        
+                                        return (
+                                          <option 
+                                            key={option.value} 
+                                            value={option.value}
+                                            disabled={isDisabled}
+                                          >
+                                            {option.value}{isDisabled ? ' (already assigned)' : ''}
+                                          </option>
+                                        )
+                                      })}
+                                    </select>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>

@@ -85,6 +85,46 @@ export default function ViewCatalogPage() {
     setSelectedVariants(prev => ({ ...prev, [variantName]: optionValue }))
   }
 
+  // Get filtered image based on selected variants for the sheet
+  const getSheetImage = useCallback(() => {
+    if (!selectedItem?.images || !Array.isArray(selectedItem.images) || selectedItem.images.length === 0) {
+      return null
+    }
+    
+    const images = selectedItem.images
+    
+    // If no variants selected, return first image without variant options, or first image
+    if (Object.keys(selectedVariants).length === 0) {
+      const withoutVariants = images.find((img: any) => !img.variantOptions || Object.keys(img.variantOptions || {}).length === 0)
+      return withoutVariants || images[0]
+    }
+    
+    // Filter images that match selected variants
+    const matchingImages = images.filter((img: any) => {
+      if (!img.variantOptions || Object.keys(img.variantOptions).length === 0) {
+        // Images without variant options are always shown
+        return true
+      }
+      
+      // Check if image's variant options match selected variants
+      const imgVariants = img.variantOptions || {}
+      return Object.keys(selectedVariants).every(variantName => {
+        const selectedValue = selectedVariants[variantName]
+        const imgValue = imgVariants[variantName]
+        // If image has this variant, it must match; if not, it's okay
+        return !imgValue || imgValue === selectedValue
+      })
+    })
+    
+    // Return first matching image, or first image without variants, or first image
+    if (matchingImages.length > 0) {
+      return matchingImages[0]
+    }
+    
+    const withoutVariants = images.find((img: any) => !img.variantOptions || Object.keys(img.variantOptions || {}).length === 0)
+    return withoutVariants || images[0]
+  }, [selectedItem, selectedVariants])
+
   // Get product URL with variants
   const getProductUrl = useCallback((item: any, variants?: Record<string, string>) => {
     if (!catalog) return ''
@@ -98,6 +138,20 @@ export default function ViewCatalogPage() {
     }
     return productUrl
   }, [catalog, selectedVariants])
+
+  // Get share text with variants
+  const getShareText = useCallback((item: any, variants?: Record<string, string>) => {
+    if (!item) return ''
+    let text = `Check out ${item.name}`
+    const variantParams = variants || selectedVariants
+    if (Object.keys(variantParams).length > 0) {
+      const variantText = Object.entries(variantParams)
+        .map(([name, value]) => `${name}: ${value}`)
+        .join(', ')
+      text += ` - ${variantText}`
+    }
+    return text
+  }, [selectedVariants])
 
   // Copy link with variants from sheet
   const handleCopyWithVariants = async () => {
@@ -124,15 +178,36 @@ export default function ViewCatalogPage() {
     try {
       const productUrl = getProductUrl(selectedItem, selectedVariants)
       
-      if (navigator.share) {
-        await navigator.share({
-          title: selectedItem.name,
-          text: `Check out ${selectedItem.name}`,
-          url: productUrl
-        })
-        setVariantSheetOpen(false)
-      } else {
-        // Fallback to copy if share is not available
+      // Try Web Share API first if available
+      if (navigator.share && typeof navigator.share === 'function') {
+        try {
+          const shareText = getShareText(selectedItem, selectedVariants)
+          await navigator.share({
+            title: selectedItem.name,
+            text: shareText,
+            url: productUrl
+          })
+          setVariantSheetOpen(false)
+          // Share succeeded, return early
+          return
+        } catch (shareError: any) {
+          // User cancelled share - don't fall back to copy, just return
+          if (shareError.name === 'AbortError' || shareError.name === 'NotAllowedError') {
+            return
+          }
+          // For other share errors, don't silently fall back - show error or try copy
+          // Only fall back to copy if it's a clear "not supported" error
+          if (shareError.name === 'TypeError' || shareError.message?.includes('not supported')) {
+            // Share not supported, fall through to copy
+          } else {
+            // Other error - don't fall back, just return
+            return
+          }
+        }
+      }
+      
+      // Fallback to copy only if share is not available
+      if (navigator.clipboard && navigator.clipboard.writeText) {
         await navigator.clipboard.writeText(productUrl)
         setCopiedItemId(selectedItem.id)
         setVariantSheetOpen(false)
@@ -140,12 +215,30 @@ export default function ViewCatalogPage() {
         setTimeout(() => {
           setCopiedItemId(null)
         }, 2000)
+      } else {
+        // Last resort: use a temporary textarea for older browsers
+        const textarea = document.createElement('textarea')
+        textarea.value = productUrl
+        textarea.style.position = 'fixed'
+        textarea.style.opacity = '0'
+        document.body.appendChild(textarea)
+        textarea.select()
+        try {
+          document.execCommand('copy')
+          setCopiedItemId(selectedItem.id)
+          setVariantSheetOpen(false)
+          toast.success('Product link copied!')
+          setTimeout(() => {
+            setCopiedItemId(null)
+          }, 2000)
+        } catch (err) {
+          toast.error('Failed to copy link')
+        } finally {
+          document.body.removeChild(textarea)
+        }
       }
     } catch (error: any) {
-      // User cancelled share or error occurred
-      if (error.name !== 'AbortError') {
-        toast.error('Failed to share link')
-      }
+      toast.error('Failed to share link')
     }
   }
 
@@ -195,26 +288,64 @@ export default function ViewCatalogPage() {
       }
       const productUrl = getProductUrl(item)
       
-      if (navigator.share) {
-        await navigator.share({
-          title: item.name,
-          text: `Check out ${item.name}`,
-          url: productUrl
-        })
-      } else {
-        // Fallback to copy if share is not available
+      // Try Web Share API first if available
+      if (navigator.share && typeof navigator.share === 'function') {
+        try {
+          const shareText = getShareText(item)
+          await navigator.share({
+            title: item.name,
+            text: shareText,
+            url: productUrl
+          })
+          // Share succeeded, return early
+          return
+        } catch (shareError: any) {
+          // User cancelled share - don't fall back to copy, just return
+          if (shareError.name === 'AbortError' || shareError.name === 'NotAllowedError') {
+            return
+          }
+          // For other share errors, don't silently fall back - show error or try copy
+          // Only fall back to copy if it's a clear "not supported" error
+          if (shareError.name === 'TypeError' || shareError.message?.includes('not supported')) {
+            // Share not supported, fall through to copy
+          } else {
+            // Other error - don't fall back, just return
+            return
+          }
+        }
+      }
+      
+      // Fallback to copy only if share is not available
+      if (navigator.clipboard && navigator.clipboard.writeText) {
         await navigator.clipboard.writeText(productUrl)
         setCopiedItemId(item.id)
         toast.success('Product link copied!')
         setTimeout(() => {
           setCopiedItemId(null)
         }, 2000)
+      } else {
+        // Last resort: use a temporary textarea for older browsers
+        const textarea = document.createElement('textarea')
+        textarea.value = productUrl
+        textarea.style.position = 'fixed'
+        textarea.style.opacity = '0'
+        document.body.appendChild(textarea)
+        textarea.select()
+        try {
+          document.execCommand('copy')
+          setCopiedItemId(item.id)
+          toast.success('Product link copied!')
+          setTimeout(() => {
+            setCopiedItemId(null)
+          }, 2000)
+        } catch (err) {
+          toast.error('Failed to copy link')
+        } finally {
+          document.body.removeChild(textarea)
+        }
       }
     } catch (error: any) {
-      // User cancelled share or error occurred
-      if (error.name !== 'AbortError') {
-        toast.error('Failed to share link')
-      }
+      toast.error('Failed to share link')
     }
   }
 
@@ -245,35 +376,111 @@ export default function ViewCatalogPage() {
 
   if (catalog) {
     return (
-      <div className="min-h-screen p-6 md:p-8 bg-gradient-to-br from-background via-background to-muted/20">
-        <div className="max-w-7xl mx-auto space-y-8">
-          <div className="text-center space-y-2 pb-6 border-b">
-            <div className="flex justify-center mb-2">
+      <div className="min-h-screen bg-gradient-to-br from-background via-background to-muted/20">
+        {/* Cover Photo Header */}
+        {catalog.coverPhoto ? (
+          <div className="relative w-full">
+            <div className="relative w-full h-64 md:h-96">
               <Image
-                src="/catalink-logo.png"
-                alt="Catalink Logo"
-                width={120}
-                height={40}
-                className="h-10 w-auto object-contain"
+                src={catalog.coverPhoto}
+                alt={catalog.title}
+                fill
+                className="object-cover"
+                unoptimized
               />
+              <div className="absolute inset-0 bg-gradient-to-t from-background via-background/80 to-transparent" />
+              <div className="absolute inset-0 z-10 flex flex-col justify-end">
+                <div className="max-w-7xl mx-auto w-full px-6 md:px-8 pt-8 pb-6">
+                  <div className="text-center space-y-2 pb-6 border-b border-border/50">
+                    <div className="flex justify-center mb-2">
+                      <Image
+                        src="/catalink-logo.png"
+                        alt="Catalink Logo"
+                        width={120}
+                        height={40}
+                        className="h-10 w-auto object-contain"
+                      />
+                    </div>
+                    <h1 className="text-4xl md:text-5xl font-bold">{catalog.title}</h1>
+                    {catalog.description && (
+                      <p className="text-muted-foreground text-lg max-w-2xl mx-auto">{catalog.description}</p>
+                    )}
+                  </div>
+                </div>
+              </div>
             </div>
-            <h1 className="text-4xl md:text-5xl font-bold">{catalog.title}</h1>
-            {catalog.description && (
-              <p className="text-muted-foreground text-lg max-w-2xl mx-auto">{catalog.description}</p>
-            )}
           </div>
+        ) : (
+          <div className="p-6 md:p-8">
+            <div className="max-w-7xl mx-auto">
+              <div className="text-center space-y-2 pb-6 border-b">
+                <div className="flex justify-center mb-2">
+                  <Image
+                    src="/catalink-logo.png"
+                    alt="Catalink Logo"
+                    width={120}
+                    height={40}
+                    className="h-10 w-auto object-contain"
+                  />
+                </div>
+                <h1 className="text-4xl md:text-5xl font-bold">{catalog.title}</h1>
+                {catalog.description && (
+                  <p className="text-muted-foreground text-lg max-w-2xl mx-auto">{catalog.description}</p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+        <div className="max-w-7xl mx-auto px-6 md:px-8 py-8 space-y-8">
 
           {catalog.items && catalog.items.length > 0 ? (
             <div className="grid grid-cols-2 gap-3 md:gap-6 lg:grid-cols-3 xl:grid-cols-4">
               {catalog.items.map((item: any) => {
-                // Handle both old imageUrl and new images array structure
-                const firstImage = item.images && Array.isArray(item.images) && item.images.length > 0 
-                  ? item.images[0] 
-                  : item.imageUrl 
-                    ? { url: item.imageUrl }
-                    : null
+                // Get thumbnail image - prefer images without variant options, or first image
+                const getThumbnailImage = () => {
+                  if (!item.images || !Array.isArray(item.images) || item.images.length === 0) {
+                    return item.imageUrl ? { url: item.imageUrl } : null
+                  }
+                  
+                  // Get default variant selections (first option of each variant)
+                  const defaultVariants: Record<string, string> = {}
+                  if (item.variants && Array.isArray(item.variants)) {
+                    item.variants.forEach((variant: any) => {
+                      if (variant.options && variant.options.length > 0) {
+                        const firstOption = variant.options[0]
+                        defaultVariants[variant.name] = typeof firstOption === 'string' ? firstOption : firstOption.value
+                      }
+                    })
+                  }
+                  
+                  // Find image matching default variants, or image without variant options
+                  const imagesWithoutVariants = item.images.filter((img: any) => 
+                    !img.variantOptions || Object.keys(img.variantOptions || {}).length === 0
+                  )
+                  
+                  if (imagesWithoutVariants.length > 0) {
+                    return imagesWithoutVariants[0]
+                  }
+                  
+                  // Find image matching default variants
+                  if (Object.keys(defaultVariants).length > 0) {
+                    const matchingImage = item.images.find((img: any) => {
+                      if (!img.variantOptions) return false
+                      return Object.keys(defaultVariants).every(variantName => {
+                        const selectedValue = defaultVariants[variantName]
+                        const imgValue = img.variantOptions[variantName]
+                        return imgValue === selectedValue
+                      })
+                    })
+                    if (matchingImage) return matchingImage
+                  }
+                  
+                  // Fallback to first image
+                  return item.images[0]
+                }
                 
-                const imageUrl = firstImage?.url || firstImage
+                const thumbnailImage = getThumbnailImage()
+                const imageUrl = thumbnailImage?.url || thumbnailImage
                 
                 return (
                   <Card key={item.id} className="overflow-hidden hover:shadow-lg transition-shadow border-2">
@@ -383,8 +590,8 @@ export default function ViewCatalogPage() {
             <SheetHeader className="pb-4 border-b">
               <SheetTitle className="flex items-center gap-3">
                 {(() => {
-                  const firstImage = selectedItem?.images?.[0]
-                  const imageUrl = firstImage ? (typeof firstImage === 'string' ? firstImage : firstImage.url) : null
+                  const sheetImage = getSheetImage()
+                  const imageUrl = sheetImage ? (typeof sheetImage === 'string' ? sheetImage : sheetImage.url) : null
                   return imageUrl ? (
                     <div className="relative w-12 h-12 rounded-lg overflow-hidden bg-muted flex-shrink-0">
                       <Image

@@ -57,6 +57,7 @@ export default function CatalogDetailPage() {
     name: string
     description: string
     imageIds: string[]
+    imageVariantOptions: Record<string, string>[]
     specifications: string
     variants: string
   } | null>(null)
@@ -96,6 +97,11 @@ export default function CatalogDetailPage() {
     // Check if any new images were added
     if (editImages.some(img => img.isNew)) return true
     
+    // Check variantOptions changes
+    const currentVariantOptions = editImages.map(img => img.variantOptions || {})
+    const initialVariantOptions = initialEditState.imageVariantOptions || []
+    if (JSON.stringify(currentVariantOptions) !== JSON.stringify(initialVariantOptions)) return true
+    
     return false
   }, [editName, editDescription, editImages, editSpecifications, editVariants, initialEditState])
 
@@ -121,7 +127,7 @@ export default function CatalogDetailPage() {
   const catalog = Array.isArray(catalogs) ? catalogs.find((c: any) => c.id === catalogId) : undefined
 
   const addItemMutation = useMutation({
-    mutationFn: async (itemData: { name: string; description?: string; images?: string[]; specifications?: { label: string; value: string }[]; variants?: { name: string; options: { value: string; specifications?: { label: string; value: string }[] }[] }[] }) => {
+    mutationFn: async (itemData: { name: string; description?: string; images?: string[] | Array<{ url: string; order?: number; variantOptions?: Record<string, string> }>; specifications?: { label: string; value: string }[]; variants?: { name: string; options: { value: string; specifications?: { label: string; value: string }[] }[] }[] }) => {
       const { data, error } = await catalogApi.addItem(catalogId, itemData)
       if (error) throw new Error(error.detail)
       return data
@@ -137,7 +143,7 @@ export default function CatalogDetailPage() {
   })
 
   const updateItemMutation = useMutation({
-    mutationFn: async ({ itemId, itemData }: { itemId: string; itemData: { name?: string; description?: string; images?: string[]; specifications?: { label: string; value: string }[]; variants?: { name: string; options: { value: string; specifications?: { label: string; value: string }[] }[] }[] } }) => {
+    mutationFn: async ({ itemId, itemData }: { itemId: string; itemData: { name?: string; description?: string; images?: string[] | Array<{ url: string; order?: number; variantOptions?: Record<string, string> }>; specifications?: { label: string; value: string }[]; variants?: { name: string; options: { value: string; specifications?: { label: string; value: string }[] }[] }[] } }) => {
       const { data, error } = await catalogApi.updateItem(catalogId, itemId, itemData)
       if (error) throw new Error(error.detail)
       return data
@@ -330,10 +336,22 @@ export default function CatalogDetailPage() {
       }))
       .filter(v => v.name && v.options.length > 0)
     
+    // Build images array with variantOptions
+    // Match by index since files are uploaded in the same order as addImages
+    const newImagesInOrder = addImages.filter(img => img.isNew && img.file)
+    const imagesWithVariants = imageUrls.map((url, idx) => {
+      const imageItem = newImagesInOrder[idx]
+      return {
+        url,
+        order: idx,
+        variantOptions: imageItem?.variantOptions || undefined,
+      }
+    })
+    
     addItemMutation.mutate({
       name,
       description: description.trim() || undefined,
-      images: imageUrls.length > 0 ? imageUrls : undefined,
+      images: imagesWithVariants.length > 0 ? imagesWithVariants : undefined,
       specifications: validSpecs.length > 0 ? validSpecs : undefined,
       variants: validVariants.length > 0 ? validVariants : undefined,
     })
@@ -382,14 +400,26 @@ export default function CatalogDetailPage() {
         newUrls = urls
       }
 
-      // Reconstruct final URL array in correct order
-      const finalUrls = imageOrder.map(item => {
-        if (item.type === 'existing') {
-          return existingUrls[item.index]
-        } else {
-          return newUrls[item.index]
+      // Reconstruct final image data array in correct order with variantOptions
+      const finalImages = imageOrder.map((orderItem, idx) => {
+        const imageItem = editImages.find((img, i) => {
+          if (orderItem.type === 'existing') {
+            return !img.isNew && img.url === existingUrls[orderItem.index]
+          } else {
+            return img.isNew && filesToUpload[orderItem.index] === img.file
+          }
+        })
+        
+        const url = orderItem.type === 'existing' 
+          ? existingUrls[orderItem.index] 
+          : newUrls[orderItem.index]
+        
+        return {
+          url,
+          order: idx,
+          variantOptions: imageItem?.variantOptions || undefined,
         }
-      }).filter(Boolean)
+      }).filter(img => img.url)
 
       // Filter out empty specifications
       const validSpecs = editSpecifications.filter(s => s.label.trim() && s.value.trim())
@@ -412,9 +442,9 @@ export default function CatalogDetailPage() {
         itemData: {
           name: editName,
           description: editDescription.trim() || undefined,
-          images: finalUrls,
-          specifications: validSpecs,
-          variants: validVariants,
+          images: finalImages.length > 0 ? finalImages : undefined,
+          specifications: validSpecs.length > 0 ? validSpecs : undefined,
+          variants: validVariants.length > 0 ? validVariants : undefined,
         },
       })
     } catch (error) {
@@ -446,15 +476,18 @@ export default function CatalogDetailPage() {
       url: img.url,
       order: img.order,
       isNew: false,
+      variantOptions: img.variantOptions || undefined,
     })) || [])
     setEditSpecifications(specs.length > 0 ? specs : [])
     setEditVariants(convertedVars.length > 0 ? convertedVars : [])
     
     // Store initial state for change detection
+    const initialImageVariantOptions = item.images?.map((img: any) => img.variantOptions || {}) || []
     setInitialEditState({
       name: item.name,
       description: item.description || '',
       imageIds: imageIds,
+      imageVariantOptions: initialImageVariantOptions,
       specifications: JSON.stringify(specs),
       variants: JSON.stringify(vars),
     })
@@ -804,14 +837,99 @@ export default function CatalogDetailPage() {
                   />
                 </div>
                 {addImages.length > 0 && (
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Images to Upload</label>
-                    <SortableImageGrid
-                      images={addImages}
-                      onReorder={setAddImages}
-                      onRemove={handleRemoveAddImage}
-                      columns={3}
-                    />
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Images to Upload</label>
+                      <SortableImageGrid
+                        images={addImages}
+                        onReorder={setAddImages}
+                        onRemove={handleRemoveAddImage}
+                        columns={3}
+                      />
+                    </div>
+                    {/* Assign variant options to images */}
+                    {variants.length > 0 && (
+                      <div className="space-y-3 border-t pt-4">
+                        <div className="flex items-center justify-between">
+                          <label className="text-sm font-medium">Assign Images to Variant Options</label>
+                          <span className="text-xs text-muted-foreground">(optional)</span>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Assign images to specific variant options. When a customer selects that option, they'll see the assigned image.
+                        </p>
+                        <div className="space-y-3">
+                          {addImages.map((img, imgIndex) => (
+                            <div key={img.id} className="border rounded-lg p-3 space-y-2">
+                              <div className="flex items-center gap-3">
+                                <div className="relative w-16 h-16 rounded-md overflow-hidden border flex-shrink-0">
+                                  <Image
+                                    src={img.url}
+                                    alt={`Image ${imgIndex + 1}`}
+                                    fill
+                                    className="object-cover"
+                                    unoptimized
+                                  />
+                                </div>
+                                <div className="flex-1 space-y-2">
+                                  <div className="text-xs font-medium">Image {imgIndex + 1}</div>
+                                  {variants.map((variant) => {
+                                    // Check which options are already assigned to other images
+                                    const isOptionAssigned = (optionValue: string) => {
+                                      return addImages.some((otherImg, otherIdx) => 
+                                        otherIdx !== imgIndex && 
+                                        otherImg.variantOptions?.[variant.name] === optionValue
+                                      )
+                                    }
+                                    
+                                    return (
+                                      <div key={variant.name} className="space-y-1">
+                                        <label className="text-xs text-muted-foreground">{variant.name}</label>
+                                        <select
+                                          value={img.variantOptions?.[variant.name] || ''}
+                                          onChange={(e) => {
+                                            const newImages = [...addImages]
+                                            if (!newImages[imgIndex].variantOptions) {
+                                              newImages[imgIndex].variantOptions = {}
+                                            }
+                                            if (e.target.value) {
+                                              newImages[imgIndex].variantOptions![variant.name] = e.target.value
+                                            } else {
+                                              delete newImages[imgIndex].variantOptions![variant.name]
+                                              if (Object.keys(newImages[imgIndex].variantOptions!).length === 0) {
+                                                delete newImages[imgIndex].variantOptions
+                                              }
+                                            }
+                                            setAddImages(newImages)
+                                          }}
+                                          className="w-full text-xs rounded-md border border-input bg-background px-2 py-1.5 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                        >
+                                          <option value="">None (show for all)</option>
+                                          {variant.options.map((option) => {
+                                            const isAssigned = isOptionAssigned(option.value)
+                                            const isCurrentSelection = img.variantOptions?.[variant.name] === option.value
+                                            const isDisabled = isAssigned && !isCurrentSelection
+                                            
+                                            return (
+                                              <option 
+                                                key={option.value} 
+                                                value={option.value}
+                                                disabled={isDisabled}
+                                              >
+                                                {option.value}{isDisabled ? ' (already assigned)' : ''}
+                                              </option>
+                                            )
+                                          })}
+                                        </select>
+                                      </div>
+                                    )
+                                  })}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -1119,14 +1237,99 @@ export default function CatalogDetailPage() {
                 />
               </div>
               {editImages.length > 0 && (
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">All Images (drag to reorder)</label>
-                  <SortableImageGrid
-                    images={editImages}
-                    onReorder={setEditImages}
-                    onRemove={handleRemoveEditImage}
-                    columns={3}
-                  />
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">All Images (drag to reorder)</label>
+                    <SortableImageGrid
+                      images={editImages}
+                      onReorder={setEditImages}
+                      onRemove={handleRemoveEditImage}
+                      columns={3}
+                    />
+                  </div>
+                  {/* Assign variant options to images */}
+                  {editVariants.length > 0 && (
+                    <div className="space-y-3 border-t pt-4">
+                      <div className="flex items-center justify-between">
+                        <label className="text-sm font-medium">Assign Images to Variant Options</label>
+                        <span className="text-xs text-muted-foreground">(optional)</span>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Assign images to specific variant options. When a customer selects that option, they'll see the assigned image.
+                      </p>
+                      <div className="space-y-3">
+                        {editImages.map((img, imgIndex) => (
+                          <div key={img.id} className="border rounded-lg p-3 space-y-2">
+                            <div className="flex items-center gap-3">
+                              <div className="relative w-16 h-16 rounded-md overflow-hidden border flex-shrink-0">
+                                <Image
+                                  src={img.url}
+                                  alt={`Image ${imgIndex + 1}`}
+                                  fill
+                                  className="object-cover"
+                                  unoptimized
+                                />
+                              </div>
+                              <div className="flex-1 space-y-2">
+                                <div className="text-xs font-medium">Image {imgIndex + 1}</div>
+                                {editVariants.map((variant) => {
+                                  // Check which options are already assigned to other images
+                                  const isOptionAssigned = (optionValue: string) => {
+                                    return editImages.some((otherImg, otherIdx) => 
+                                      otherIdx !== imgIndex && 
+                                      otherImg.variantOptions?.[variant.name] === optionValue
+                                    )
+                                  }
+                                  
+                                  return (
+                                    <div key={variant.name} className="space-y-1">
+                                      <label className="text-xs text-muted-foreground">{variant.name}</label>
+                                      <select
+                                        value={img.variantOptions?.[variant.name] || ''}
+                                        onChange={(e) => {
+                                          const newImages = [...editImages]
+                                          if (!newImages[imgIndex].variantOptions) {
+                                            newImages[imgIndex].variantOptions = {}
+                                          }
+                                          if (e.target.value) {
+                                            newImages[imgIndex].variantOptions![variant.name] = e.target.value
+                                          } else {
+                                            delete newImages[imgIndex].variantOptions![variant.name]
+                                            if (Object.keys(newImages[imgIndex].variantOptions!).length === 0) {
+                                              delete newImages[imgIndex].variantOptions
+                                            }
+                                          }
+                                          setEditImages(newImages)
+                                        }}
+                                        className="w-full text-xs rounded-md border border-input bg-background px-2 py-1.5 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                      >
+                                        <option value="">None (show for all)</option>
+                                        {variant.options.map((option) => {
+                                          const isAssigned = isOptionAssigned(option.value)
+                                          const isCurrentSelection = img.variantOptions?.[variant.name] === option.value
+                                          const isDisabled = isAssigned && !isCurrentSelection
+                                          
+                                          return (
+                                            <option 
+                                              key={option.value} 
+                                              value={option.value}
+                                              disabled={isDisabled}
+                                            >
+                                              {option.value}{isDisabled ? ' (already assigned)' : ''}
+                                            </option>
+                                          )
+                                        })}
+                                      </select>
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

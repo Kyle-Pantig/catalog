@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import { PhotoProvider, PhotoView } from 'react-photo-view'
@@ -46,6 +46,9 @@ export default function ViewItemDetailPage() {
     const newSelections = { ...selectedVariants, [variantName]: optionValue }
     setSelectedVariants(newSelections)
     updateVariantUrl(newSelections)
+    // Reset image index when variants change
+    setSelectedImageIndex(0)
+    setPage([0, 0])
   }, [selectedVariants, updateVariantUrl])
 
   useEffect(() => {
@@ -74,7 +77,42 @@ export default function ViewItemDetailPage() {
 
   const item = catalog?.items?.find((i: any) => i.id === itemId)
 
-  const totalImages = item?.images?.length || 0
+  // Filter images based on selected variants
+  const filteredImages = useMemo(() => {
+    if (!item?.images) return []
+    
+    const images = item.images
+    
+    // If no variants selected or item has no variants, return all images
+    if (!item.variants || item.variants.length === 0 || Object.keys(selectedVariants).length === 0) {
+      // Return images without variant options first, then images with variant options
+      const withoutVariants = images.filter((img: any) => !img.variantOptions || Object.keys(img.variantOptions || {}).length === 0)
+      const withVariants = images.filter((img: any) => img.variantOptions && Object.keys(img.variantOptions).length > 0)
+      return [...withoutVariants, ...withVariants]
+    }
+    
+    // Filter images that match selected variants
+    const matchingImages = images.filter((img: any) => {
+      if (!img.variantOptions || Object.keys(img.variantOptions).length === 0) {
+        // Images without variant options are always shown
+        return true
+      }
+      
+      // Check if image's variant options match selected variants
+      const imgVariants = img.variantOptions || {}
+      return Object.keys(selectedVariants).every(variantName => {
+        const selectedValue = selectedVariants[variantName]
+        const imgValue = imgVariants[variantName]
+        // If image has this variant, it must match; if not, it's okay
+        return !imgValue || imgValue === selectedValue
+      })
+    })
+    
+    // If we have matching images, return them; otherwise return all images
+    return matchingImages.length > 0 ? matchingImages : images
+  }, [item?.images, selectedVariants])
+
+  const totalImages = filteredImages.length || 0
 
   // Auto-select variant options on load (from URL params or default to first)
   useEffect(() => {
@@ -112,6 +150,39 @@ export default function ViewItemDetailPage() {
       }
     }
   }, [item?.variants, searchParams, updateVariantUrl])
+  
+  // Sync selectedVariants with URL params when they change (e.g., browser back/forward)
+  useEffect(() => {
+    if (item?.variants && item.variants.length > 0 && Object.keys(selectedVariants).length > 0) {
+      const urlSelections: Record<string, string> = {}
+      let hasUrlParams = false
+      
+      item.variants.forEach((variant: { name: string; options: any[] }) => {
+        const urlValue = searchParams.get(variant.name)
+        if (urlValue) {
+          const validOption = variant.options.find((o: any) => 
+            (typeof o === 'string' ? o : o.value) === urlValue
+          )
+          if (validOption) {
+            urlSelections[variant.name] = urlValue
+            hasUrlParams = true
+          }
+        }
+      })
+      
+      // Only update if URL params exist and differ from current selections
+      if (hasUrlParams) {
+        const currentStr = JSON.stringify(selectedVariants)
+        const urlStr = JSON.stringify(urlSelections)
+        if (currentStr !== urlStr) {
+          setSelectedVariants(urlSelections)
+          // Reset image index when variants change from URL
+          setSelectedImageIndex(0)
+          setPage([0, 0])
+        }
+      }
+    }
+  }, [searchParams, item?.variants, selectedVariants])
 
   // Check if item has variants and if all variants are selected
   const hasVariants = item?.variants && item.variants.length > 0
@@ -177,6 +248,19 @@ export default function ViewItemDetailPage() {
     return productUrl
   }, [catalog, itemId, hasVariants, selectedVariants])
 
+  // Get share text with variants
+  const getShareText = useCallback(() => {
+    if (!item) return ''
+    let text = `Check out ${item.name}`
+    if (hasVariants && Object.keys(selectedVariants).length > 0) {
+      const variantText = Object.entries(selectedVariants)
+        .map(([name, value]) => `${name}: ${value}`)
+        .join(', ')
+      text += ` - ${variantText}`
+    }
+    return text
+  }, [item, hasVariants, selectedVariants])
+
   // Copy product link with selected variants
   const handleCopyLink = useCallback(async () => {
     try {
@@ -207,44 +291,137 @@ export default function ViewItemDetailPage() {
       
       const productUrl = getProductUrl()
       
-      if (navigator.share) {
-        await navigator.share({
-          title: item.name,
-          text: `Check out ${item.name}`,
-          url: productUrl
-        })
-      } else {
-        // Fallback to copy if share is not available
+      // Try Web Share API first if available
+      if (navigator.share && typeof navigator.share === 'function') {
+        try {
+          const shareText = getShareText()
+          await navigator.share({
+            title: item.name,
+            text: shareText,
+            url: productUrl
+          })
+          // Share succeeded, return early
+          return
+        } catch (shareError: any) {
+          // User cancelled share - don't fall back to copy, just return
+          if (shareError.name === 'AbortError' || shareError.name === 'NotAllowedError') {
+            return
+          }
+          // For other share errors, don't silently fall back - show error or try copy
+          // Only fall back to copy if it's a clear "not supported" error
+          if (shareError.name === 'TypeError' || shareError.message?.includes('not supported')) {
+            // Share not supported, fall through to copy
+          } else {
+            // Other error - don't fall back, just return
+            return
+          }
+        }
+      }
+      
+      // Fallback to copy only if share is not available
+      if (navigator.clipboard && navigator.clipboard.writeText) {
         await navigator.clipboard.writeText(productUrl)
         setCopied(true)
         toast.success('Product link copied!')
         setTimeout(() => {
           setCopied(false)
         }, 2000)
-      }
-    } catch (error: any) {
-      // User cancelled share or error occurred
-      if (error.name !== 'AbortError') {
-        // Fallback to copy on error
+      } else {
+        // Last resort: use a temporary textarea for older browsers
+        const textarea = document.createElement('textarea')
+        textarea.value = productUrl
+        textarea.style.position = 'fixed'
+        textarea.style.opacity = '0'
+        document.body.appendChild(textarea)
+        textarea.select()
         try {
-          const productUrl = getProductUrl()
-          await navigator.clipboard.writeText(productUrl)
+          document.execCommand('copy')
           setCopied(true)
           toast.success('Product link copied!')
           setTimeout(() => {
             setCopied(false)
           }, 2000)
-        } catch (copyError) {
-          toast.error('Failed to share link')
+        } catch (err) {
+          toast.error('Failed to copy link')
+        } finally {
+          document.body.removeChild(textarea)
         }
       }
+    } catch (error: any) {
+      toast.error('Failed to share link')
     }
   }, [catalog, item, getProductUrl])
 
-  // Get images from item
-  const images = item?.images || []
+  // Get images from item (filtered by variants for main display)
+  const images = filteredImages
   const hasImages = images.length > 0
   const selectedImage = hasImages ? images[selectedImageIndex] : null
+  
+  // For thumbnails, always show all images so users can see all available images
+  const allImages = item?.images || []
+  
+  // Get the actual position of the selected image in all images
+  const selectedImagePosition = useMemo(() => {
+    if (!selectedImage || !allImages.length) return 0
+    const position = allImages.findIndex((img: any) => img.id === selectedImage.id)
+    return position !== -1 ? position + 1 : 0
+  }, [selectedImage, allImages])
+  
+  // Handle clicking on a thumbnail image - switch variants if needed
+  const handleThumbnailClick = useCallback((img: any, allImagesIndex: number) => {
+    if (!item?.images) return
+    
+    const filteredIndex = images.findIndex((filteredImg: any) => filteredImg.id === img.id)
+    const isVisible = filteredIndex !== -1
+    
+    if (isVisible) {
+      // Image is already visible, just switch to it
+      goToImage(filteredIndex)
+    } else {
+      // Image is not visible - switch variants to make it visible
+      if (img.variantOptions && Object.keys(img.variantOptions).length > 0) {
+        // Update selected variants to match this image's variant options
+        const newSelections = { ...selectedVariants }
+        Object.entries(img.variantOptions).forEach(([variantName, optionValue]) => {
+          newSelections[variantName] = optionValue as string
+        })
+        
+        // Calculate what the filtered images will be with new selections
+        const newFilteredImages = item.images.filter((filteredImg: any) => {
+          if (!filteredImg.variantOptions || Object.keys(filteredImg.variantOptions).length === 0) {
+            return true
+          }
+          const imgVariants = filteredImg.variantOptions || {}
+          return Object.keys(newSelections).every(variantName => {
+            const selectedValue = newSelections[variantName]
+            const imgValue = imgVariants[variantName]
+            return !imgValue || imgValue === selectedValue
+          })
+        })
+        
+        // Find the target image index in the new filtered list
+        const targetIndex = newFilteredImages.findIndex((filteredImg: any) => filteredImg.id === img.id)
+        
+        // Update variants and navigate to the image
+        setSelectedVariants(newSelections)
+        updateVariantUrl(newSelections)
+        
+        // Navigate to the image after a brief delay to allow state update
+        if (targetIndex !== -1) {
+          setTimeout(() => {
+            setSelectedImageIndex(targetIndex)
+            setPage([0, 0])
+          }, 100)
+        }
+      } else {
+        // Image has no variant options, should always be visible
+        const foundIndex = images.findIndex((filteredImg: any) => filteredImg.id === img.id)
+        if (foundIndex !== -1) {
+          goToImage(foundIndex)
+        }
+      }
+    }
+  }, [images, selectedVariants, updateVariantUrl, goToImage, item])
 
   if (loading || !catalog) {
     return (
@@ -431,7 +608,7 @@ export default function ViewItemDetailPage() {
                                 animate={{ opacity: 1, y: 0 }}
                                 className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 px-3 py-1 bg-black/60 text-white text-sm font-medium rounded-full pointer-events-none"
                               >
-                                {selectedImageIndex + 1} / {images.length}
+                                {selectedImagePosition} / {allImages.length}
                               </motion.div>
                             </>
                           )}
@@ -451,27 +628,35 @@ export default function ViewItemDetailPage() {
                   </div>
                 )}
 
-                {/* Image Thumbnails */}
-                {images.length > 1 && (
+                {/* Image Thumbnails - Show all images, but indicate which are visible */}
+                {allImages.length > 1 && (
                   <div className="flex gap-2 overflow-x-auto pb-2">
-                    {images.map((img: any, idx: number) => (
-                      <button
-                        key={img.id || idx}
-                        onClick={() => goToImage(idx)}
-                        className={`relative w-16 h-16 md:w-20 md:h-20 flex-shrink-0 rounded-lg overflow-hidden border-2 transition-all cursor-pointer ${
-                          selectedImageIndex === idx 
-                            ? 'border-primary ring-2 ring-primary/20' 
-                            : 'border-border hover:border-muted-foreground/50'
-                        }`}
-                      >
-                        <Image
-                          src={img.url}
-                          alt={`${item.name} - ${idx + 1}`}
-                          fill
-                          className="object-cover"
-                        />
-                      </button>
-                    ))}
+                    {allImages.map((img: any, idx: number) => {
+                      // Find the index in filtered images if this image is visible
+                      const filteredIndex = images.findIndex((filteredImg: any) => filteredImg.id === img.id)
+                      const isVisible = filteredIndex !== -1
+                      const isSelected = isVisible && filteredIndex === selectedImageIndex
+                      
+                      return (
+                        <button
+                          key={img.id || idx}
+                          onClick={() => handleThumbnailClick(img, idx)}
+                          className={`relative w-16 h-16 md:w-20 md:h-20 flex-shrink-0 rounded-lg overflow-hidden border-2 transition-all cursor-pointer ${
+                            isSelected
+                              ? 'border-primary ring-2 ring-primary/20' 
+                              : 'border-border hover:border-muted-foreground/50'
+                          }`}
+                          title={!isVisible ? `Click to switch to variants: ${img.variantOptions ? Object.entries(img.variantOptions).map(([k, v]) => `${k}: ${v}`).join(', ') : 'No variants'}` : ''}
+                        >
+                          <Image
+                            src={img.url}
+                            alt={`${item.name} - ${idx + 1}`}
+                            fill
+                            className="object-cover"
+                          />
+                        </button>
+                      )
+                    })}
                   </div>
                 )}
               </div>

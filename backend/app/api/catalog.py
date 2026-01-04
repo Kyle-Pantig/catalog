@@ -30,11 +30,16 @@ async def create_catalog(
     """Create a new catalog (Owner only)"""
     try:
         # Create catalog with Supabase user ID
-        new_catalog = await prisma.catalog.create(data={
+        create_data = {
             "title": catalog.title,
-            "description": catalog.description,
             "ownerId": current_user["id"]
-        })
+        }
+        if catalog.description is not None:
+            create_data["description"] = catalog.description
+        if catalog.coverPhoto is not None:
+            create_data["coverPhoto"] = catalog.coverPhoto
+        
+        new_catalog = await prisma.catalog.create(data=create_data)
         
         return new_catalog
     except Exception as e:
@@ -60,6 +65,10 @@ async def get_my_catalogs(
             },
             order={"createdAt": "desc"}
         )
+        # Ensure coverPhoto is always present (for backward compatibility)
+        for catalog in catalogs:
+            if not hasattr(catalog, 'coverPhoto'):
+                catalog.coverPhoto = None
         return catalogs
     except Exception as e:
         import traceback
@@ -85,6 +94,9 @@ async def update_catalog(
             update_data["title"] = catalog_update.title
         if catalog_update.description is not None:
             update_data["description"] = catalog_update.description
+        if catalog_update.coverPhoto is not None:
+            # If setting coverPhoto to empty string, treat as None
+            update_data["coverPhoto"] = catalog_update.coverPhoto if catalog_update.coverPhoto else None
         
         if not update_data:
             raise HTTPException(status_code=400, detail="No fields to update")
@@ -121,12 +133,17 @@ async def delete_catalog(
             include={"items": {"include": {"images": True}}}
         )
         
-        # Collect all image URLs
+        # Collect all image URLs (including cover photo)
         image_urls = []
-        if catalog and catalog.items:
-            for item in catalog.items:
-                if item.images:
-                    image_urls.extend([img.url for img in item.images])
+        if catalog:
+            # Add cover photo if it exists
+            if catalog.coverPhoto:
+                image_urls.append(catalog.coverPhoto)
+            # Add item images
+            if catalog.items:
+                for item in catalog.items:
+                    if item.images:
+                        image_urls.extend([img.url for img in item.images])
         
         # Delete catalog from database (cascade will delete items and share codes)
         await prisma.catalog.delete(where={"id": catalog_id})
@@ -196,7 +213,23 @@ async def create_item(
         
         # Add images if provided
         if item.images:
-            create_data["images"] = {"create": [{"url": url, "order": idx} for idx, url in enumerate(item.images)]}
+            image_data = []
+            for idx, img_item in enumerate(item.images):
+                # Handle both old format (string) and new format (dict/object)
+                if isinstance(img_item, str):
+                    # Backward compatibility: simple URL string
+                    image_data.append({"url": img_item, "order": idx})
+                else:
+                    # New format: object with url, order, and variantOptions
+                    img_dict = {
+                        "url": img_item.get("url") if isinstance(img_item, dict) else img_item.url,
+                        "order": img_item.get("order", idx) if isinstance(img_item, dict) else (img_item.order if hasattr(img_item, 'order') and img_item.order is not None else idx)
+                    }
+                    variant_opts = img_item.get("variantOptions") if isinstance(img_item, dict) else (img_item.variantOptions if hasattr(img_item, 'variantOptions') else None)
+                    if variant_opts:
+                        img_dict["variantOptions"] = Json(variant_opts)
+                    image_data.append(img_dict)
+            create_data["images"] = {"create": image_data}
         
         new_item = await prisma.item.create(
             data=create_data,
@@ -253,7 +286,22 @@ async def update_item(
         
         # Handle images - use nested operations for efficiency
         if item_update.images is not None:
-            image_data = [{"url": url, "order": idx} for idx, url in enumerate(item_update.images)]
+            image_data = []
+            for idx, img_item in enumerate(item_update.images):
+                # Handle both old format (string) and new format (dict/object)
+                if isinstance(img_item, str):
+                    # Backward compatibility: simple URL string
+                    image_data.append({"url": img_item, "order": idx})
+                else:
+                    # New format: object with url, order, and variantOptions
+                    img_dict = {
+                        "url": img_item.get("url") if isinstance(img_item, dict) else img_item.url,
+                        "order": img_item.get("order", idx) if isinstance(img_item, dict) else (img_item.order if hasattr(img_item, 'order') and img_item.order is not None else idx)
+                    }
+                    variant_opts = img_item.get("variantOptions") if isinstance(img_item, dict) else (img_item.variantOptions if hasattr(img_item, 'variantOptions') else None)
+                    if variant_opts:
+                        img_dict["variantOptions"] = Json(variant_opts)
+                    image_data.append(img_dict)
             # Delete all existing and create new in one update operation
             update_data["images"] = {
                 "deleteMany": {},  # Delete all existing images
@@ -411,10 +459,14 @@ async def view_catalog_by_code(code: str, request: Request):
         
         catalog = share_code.catalog
         
+        # Ensure coverPhoto is always present
+        cover_photo = getattr(catalog, 'coverPhoto', None)
+        
         return {
             "id": catalog.id,
             "title": catalog.title,
             "description": catalog.description,
+            "coverPhoto": cover_photo,
             "ownerId": catalog.ownerId,
             "createdAt": catalog.createdAt,
             "items": catalog.items,

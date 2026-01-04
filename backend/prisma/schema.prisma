@@ -15,6 +15,7 @@ model Catalog {
   id          String      @id @default(uuid())
   title       String
   description String?
+  coverPhoto  String?     // URL to cover photo in catalog-images bucket
   ownerId     String      // Supabase user ID from auth.users
   items       Item[]
   shareCodes  ShareCode[]
@@ -34,12 +35,13 @@ model Item {
 }
 
 model ItemImage {
-  id        String   @id @default(uuid())
-  itemId    String
-  item      Item     @relation(fields: [itemId], references: [id], onDelete: Cascade)
-  url       String
-  order     Int      @default(0)
-  createdAt DateTime @default(now())
+  id             String   @id @default(uuid())
+  itemId         String
+  item           Item     @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  url            String
+  order          Int      @default(0)
+  variantOptions Json?    // Stores variant option associations like {"Color": "Red", "Size": "M"}
+  createdAt      DateTime @default(now())
 }
 
 model ShareCode {

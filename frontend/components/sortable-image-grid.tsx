@@ -26,6 +26,7 @@ export interface ImageItem {
   order: number
   isNew?: boolean
   file?: File
+  variantOptions?: Record<string, string> // e.g., {"Color": "Red", "Size": "M"}
 }
 
 interface SortableImageProps {

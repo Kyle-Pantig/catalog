@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
@@ -7,19 +7,44 @@ from datetime import datetime
 class CatalogCreate(BaseModel):
     title: str
     description: Optional[str] = None
+    coverPhoto: Optional[str] = None
 
 
 class CatalogUpdate(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
+    coverPhoto: Optional[str] = None
 
 
 class CatalogResponse(BaseModel):
     id: str
     title: str
-    description: Optional[str]
+    description: Optional[str] = None
+    coverPhoto: Optional[str] = None
     ownerId: str
     createdAt: datetime
+    
+    @model_validator(mode='before')
+    @classmethod
+    def ensure_cover_photo(cls, data: Any) -> Any:
+        """Ensure coverPhoto field is always present, even if missing from database"""
+        if isinstance(data, dict):
+            if 'coverPhoto' not in data:
+                data['coverPhoto'] = None
+        elif hasattr(data, '__dict__'):
+            # Handle Prisma model objects
+            if not hasattr(data, 'coverPhoto'):
+                setattr(data, 'coverPhoto', None)
+        elif hasattr(data, 'coverPhoto'):
+            # Already has the attribute, even if None
+            pass
+        else:
+            # Try to set it as an attribute
+            try:
+                setattr(data, 'coverPhoto', None)
+            except:
+                pass
+        return data
     
     class Config:
         from_attributes = True
@@ -29,6 +54,7 @@ class CatalogResponse(BaseModel):
 class ItemImageCreate(BaseModel):
     url: str
     order: Optional[int] = 0
+    variantOptions: Optional[Dict[str, str]] = None  # e.g., {"Color": "Red", "Size": "M"}
 
 
 class ItemImageResponse(BaseModel):
@@ -36,6 +62,7 @@ class ItemImageResponse(BaseModel):
     itemId: str
     url: str
     order: int
+    variantOptions: Optional[Dict[str, str]] = None
     createdAt: datetime
     
     class Config:
@@ -49,6 +76,12 @@ class ImageOrderItem(BaseModel):
 
 class ReorderImagesRequest(BaseModel):
     images: List[ImageOrderItem]
+
+
+class ItemImageData(BaseModel):
+    url: str
+    order: Optional[int] = 0
+    variantOptions: Optional[Dict[str, str]] = None  # e.g., {"Color": "Red", "Size": "M"}
 
 
 # Specification Schema
@@ -73,7 +106,7 @@ class VariantItem(BaseModel):
 class ItemCreate(BaseModel):
     name: str
     description: Optional[str] = None
-    images: Optional[List[str]] = None  # List of image URLs
+    images: Optional[List[Any]] = None  # Can be List[str] (backward compat) or List[ItemImageData] (new format)
     specifications: Optional[List[SpecificationItem]] = None  # Custom specs like [{label: "Length", value: "10cm"}]
     variants: Optional[List[VariantItem]] = None  # Variants like [{name: "Size", options: ["S", "M", "L"]}]
 
@@ -81,7 +114,7 @@ class ItemCreate(BaseModel):
 class ItemUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
-    images: Optional[List[str]] = None  # List of image URLs to replace existing
+    images: Optional[List[Any]] = None  # Can be List[str] (backward compat) or List[ItemImageData] (new format)
     specifications: Optional[List[SpecificationItem]] = None
     variants: Optional[List[VariantItem]] = None
 

@@ -72,16 +72,16 @@ export const authApi = {
 
 // Catalog API
 export const catalogApi = {
-  create: async (title: string, description?: string) => {
+  create: async (title: string, description?: string, coverPhoto?: string) => {
     return apiRequest('/catalog', {
       method: 'POST',
-      body: JSON.stringify({ title, description }),
+      body: JSON.stringify({ title, description, coverPhoto }),
     })
   },
   getMy: async () => {
     return apiRequest('/catalog/my')
   },
-  update: async (id: string, data: { title?: string; description?: string }) => {
+  update: async (id: string, data: { title?: string; description?: string; coverPhoto?: string }) => {
     return apiRequest(`/catalog/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data),
@@ -92,13 +92,13 @@ export const catalogApi = {
       method: 'DELETE',
     })
   },
-  addItem: async (catalogId: string, item: { name: string; description?: string; images?: string[]; specifications?: { label: string; value: string }[]; variants?: { name: string; options: { value: string; specifications?: { label: string; value: string }[] }[] }[] }) => {
+  addItem: async (catalogId: string, item: { name: string; description?: string; images?: string[] | Array<{ url: string; order?: number; variantOptions?: Record<string, string> }>; specifications?: { label: string; value: string }[]; variants?: { name: string; options: { value: string; specifications?: { label: string; value: string }[] }[] }[] }) => {
     return apiRequest(`/catalog/${catalogId}/items`, {
       method: 'POST',
       body: JSON.stringify(item),
     })
   },
-  updateItem: async (catalogId: string, itemId: string, item: { name?: string; description?: string; images?: string[]; specifications?: { label: string; value: string }[]; variants?: { name: string; options: { value: string; specifications?: { label: string; value: string }[] }[] }[] }) => {
+  updateItem: async (catalogId: string, itemId: string, item: { name?: string; description?: string; images?: string[] | Array<{ url: string; order?: number; variantOptions?: Record<string, string> }>; specifications?: { label: string; value: string }[]; variants?: { name: string; options: { value: string; specifications?: { label: string; value: string }[] }[] }[] }) => {
     return apiRequest(`/catalog/${catalogId}/items/${itemId}`, {
       method: 'PUT',
       body: JSON.stringify(item),

@@ -164,6 +164,8 @@ export default function CatalogDetailPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['catalogs'] })
+      setDeleteDialogOpen(false)
+      setDeletingItem(null)
       toast.success('Item deleted successfully!')
     },
     onError: (error: Error) => {
@@ -547,7 +549,7 @@ export default function CatalogDetailPage() {
                 </div>
                 <div className="space-y-2">
                   <label htmlFor="item-description" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                    Description (optional)
+                    Description <span className="text-xs text-muted-foreground font-normal">(optional)</span>
                   </label>
                   <textarea
                     id="item-description"
@@ -562,7 +564,7 @@ export default function CatalogDetailPage() {
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
                       <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                        Specifications (optional)
+                        Specifications <span className="text-xs text-muted-foreground font-normal">(optional)</span>
                       </label>
                       <Button
                         type="button"
@@ -621,7 +623,7 @@ export default function CatalogDetailPage() {
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
                       <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                        Variants (optional)
+                        Variants <span className="text-xs text-muted-foreground font-normal">(optional)</span>
                       </label>
                       <Button
                         type="button"
@@ -785,7 +787,7 @@ export default function CatalogDetailPage() {
                 )}
                 <div className="space-y-2">
                   <label htmlFor="item-images" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                    Images (optional)
+                    Images <span className="text-xs text-muted-foreground font-normal">(optional)</span>
                   </label>
                   <Input
                     id="item-images"
@@ -862,7 +864,7 @@ export default function CatalogDetailPage() {
               </div>
               <div className="space-y-2">
                 <label htmlFor="edit-item-description" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                  Description (optional)
+                  Description <span className="text-xs text-muted-foreground font-normal">(optional)</span>
                 </label>
                 <textarea
                   id="edit-item-description"
@@ -877,7 +879,7 @@ export default function CatalogDetailPage() {
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                      Specifications (optional)
+                      Specifications <span className="text-xs text-muted-foreground font-normal">(optional)</span>
                     </label>
                     <Button
                       type="button"
@@ -936,7 +938,7 @@ export default function CatalogDetailPage() {
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                      Variants (optional)
+                      Variants <span className="text-xs text-muted-foreground font-normal">(optional)</span>
                     </label>
                     <Button
                       type="button"
@@ -1162,8 +1164,6 @@ export default function CatalogDetailPage() {
             if (deletingItem) {
               deleteItemMutation.mutate(deletingItem.id)
             }
-            setDeleteDialogOpen(false)
-            setDeletingItem(null)
           }}
           isLoading={deleteItemMutation.isPending}
         />

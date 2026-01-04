@@ -109,6 +109,8 @@ export default function CatalogsPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['catalogs'] })
+      setDeleteDialogOpen(false)
+      setDeletingCatalog(null)
       toast.success('Catalog deleted successfully!')
     },
     onError: (error: Error) => {
@@ -199,7 +201,7 @@ export default function CatalogsPage() {
                     id="catalog-description"
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
-                    placeholder="Catalog description (optional)"
+                    placeholder="Catalog description"
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && title && !createMutation.isPending) {
                         createMutation.mutate()
@@ -262,7 +264,7 @@ export default function CatalogsPage() {
                     id="edit-catalog-description"
                     value={editDescription}
                     onChange={(e) => setEditDescription(e.target.value)}
-                    placeholder="Catalog description (optional)"
+                    placeholder="Catalog description"
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && editTitle && !updateMutation.isPending) {
                         updateMutation.mutate({ id: editingCatalog?.id, title: editTitle, description: editDescription })
@@ -613,11 +615,9 @@ export default function CatalogsPage() {
           title={deletingCatalog?.title || 'Catalog'}
           onConfirm={() => {
             if (deletingCatalog) {
-                      deleteMutation.mutate(deletingCatalog.id)
+              deleteMutation.mutate(deletingCatalog.id)
             }
-            setDeleteDialogOpen(false)
-                      setDeletingCatalog(null)
-                    }}
+          }}
           isLoading={deleteMutation.isPending}
         />
       </div>

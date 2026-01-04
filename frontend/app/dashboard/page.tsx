@@ -33,8 +33,8 @@ export default function DashboardPage() {
     const checkAuth = async () => {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) {
-        router.push('/login')
-      } else {
+      router.push('/login')
+    } else {
         setUser({
           id: session.user.id,
           email: session.user.email
@@ -64,7 +64,7 @@ export default function DashboardPage() {
       <div className="max-w-7xl mx-auto p-6 md:p-8 space-y-8">
         {/* Header */}
         <div className={`sticky top-0 z-50 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 -mx-6 md:-mx-8 px-6 md:px-8 transition-[padding] duration-200 ${isScrolled ? 'pt-4' : ''}`}>
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 pb-6 border-b">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 pb-6 border-b">
             <Image
               src="/catalink-logo.png"
               alt="Catalink Logo"
@@ -102,9 +102,9 @@ export default function DashboardPage() {
 
         {/* Welcome Message */}
         {user && (
-          <p className="text-lg text-muted-foreground">
-            Welcome back{user.email && <span className="font-medium text-foreground">, {user.email}</span>}
-          </p>
+            <p className="text-lg text-muted-foreground">
+              Welcome back{user.email && <span className="font-medium text-foreground">, {user.email}</span>}
+            </p>
         )}
 
         {/* Charts - 2 Columns */}

@@ -5,6 +5,7 @@ from app.core.database import prisma
 from app.core.security import get_current_user
 from app.models.schemas import CatalogCreate, CatalogUpdate, CatalogResponse, CatalogWithItems, ItemCreate, ItemUpdate, ItemResponse, ReorderImagesRequest
 from app.utils.timezone import get_ph_time_utc
+from app.utils.storage import delete_images_from_storage
 from typing import List
 import asyncio
 
@@ -114,8 +115,29 @@ async def delete_catalog(
         # Verify ownership with minimal query
         await verify_catalog_ownership(catalog_id, current_user["id"])
         
-        # Delete catalog (cascade will delete items and share codes)
+        # Get all items with their images before deleting
+        catalog = await prisma.catalog.find_unique(
+            where={"id": catalog_id},
+            include={"items": {"include": {"images": True}}}
+        )
+        
+        # Collect all image URLs
+        image_urls = []
+        if catalog and catalog.items:
+            for item in catalog.items:
+                if item.images:
+                    image_urls.extend([img.url for img in item.images])
+        
+        # Delete catalog from database (cascade will delete items and share codes)
         await prisma.catalog.delete(where={"id": catalog_id})
+        
+        # Delete images from Supabase storage (do this after DB delete succeeds)
+        if image_urls:
+            try:
+                await delete_images_from_storage(image_urls)
+            except Exception as e:
+                # Log error but don't fail the request - DB deletion already succeeded
+                print(f"Warning: Failed to delete some images from storage: {str(e)}")
         
         return {"message": "Catalog deleted successfully"}
     except HTTPException:
@@ -157,20 +179,27 @@ async def create_item(
             if vars_data:
                 variants_json = Json(vars_data)
         
-        # Create item with images in a single transaction using nested create
-        image_data = []
+        # Build create data - only include fields that have values
+        create_data = {
+            "catalogId": catalog_id,
+            "name": item.name,
+        }
+        
+        if item.description:
+            create_data["description"] = item.description
+        
+        if specs_json is not None:
+            create_data["specifications"] = specs_json
+        
+        if variants_json is not None:
+            create_data["variants"] = variants_json
+        
+        # Add images if provided
         if item.images:
-            image_data = [{"url": url, "order": idx} for idx, url in enumerate(item.images)]
+            create_data["images"] = {"create": [{"url": url, "order": idx} for idx, url in enumerate(item.images)]}
         
         new_item = await prisma.item.create(
-            data={
-                "catalogId": catalog_id,
-                "name": item.name,
-                "description": item.description if item.description else None,
-                "specifications": specs_json,
-                "variants": variants_json,
-                "images": {"create": image_data} if image_data else None
-            },
+            data=create_data,
             include={"images": {"order_by": {"order": "asc"}}}
         )
         
@@ -259,13 +288,27 @@ async def delete_item(
         # Verify ownership
         await verify_catalog_ownership(catalog_id, current_user["id"])
         
-        # Verify item exists and belongs to catalog
-        item = await prisma.item.find_unique(where={"id": item_id})
+        # Verify item exists and belongs to catalog, include images
+        item = await prisma.item.find_unique(
+            where={"id": item_id},
+            include={"images": True}
+        )
         if not item or item.catalogId != catalog_id:
             raise HTTPException(status_code=404, detail="Item not found")
         
-        # Delete item (cascade will delete images)
+        # Get image URLs before deleting from database
+        image_urls = [img.url for img in item.images] if item.images else []
+        
+        # Delete item from database (cascade will delete image records)
         await prisma.item.delete(where={"id": item_id})
+        
+        # Delete images from Supabase storage (do this after DB delete succeeds)
+        if image_urls:
+            try:
+                await delete_images_from_storage(image_urls)
+            except Exception as e:
+                # Log error but don't fail the request - DB deletion already succeeded
+                print(f"Warning: Failed to delete some images from storage: {str(e)}")
         
         return {"message": "Item deleted successfully"}
     except HTTPException:

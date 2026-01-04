@@ -272,6 +272,7 @@ export default function ItemDetailPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['catalogs'] })
+      setDeleteDialogOpen(false)
       toast.success('Item deleted successfully!')
       router.push(`/dashboard/catalogs/${catalogId}`)
     },
@@ -918,7 +919,7 @@ export default function ItemDetailPage() {
             </div>
             <div className="space-y-2">
               <label htmlFor="edit-item-description" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                Description (optional)
+                Description <span className="text-xs text-muted-foreground font-normal">(optional)</span>
               </label>
               <textarea
                 id="edit-item-description"
@@ -933,7 +934,7 @@ export default function ItemDetailPage() {
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                    Specifications (optional)
+                    Specifications <span className="text-xs text-muted-foreground font-normal">(optional)</span>
                   </label>
                   <Button
                     type="button"
@@ -992,7 +993,7 @@ export default function ItemDetailPage() {
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                    Variants (optional)
+                    Variants <span className="text-xs text-muted-foreground font-normal">(optional)</span>
                   </label>
                   <Button
                     type="button"
@@ -1245,7 +1246,6 @@ export default function ItemDetailPage() {
         title={item.name}
         onConfirm={() => {
           deleteItemMutation.mutate()
-          setDeleteDialogOpen(false)
         }}
         isLoading={deleteItemMutation.isPending}
       />

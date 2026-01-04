@@ -26,7 +26,7 @@ export default function SharePage() {
     const checkAuth = async () => {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) {
-        router.push('/login')
+      router.push('/login')
       }
     }
     checkAuth()
@@ -227,7 +227,7 @@ function ShareCodeItem({ code, onDelete, isDeleting }: { code: any; onDelete: ()
               : 'bg-blue-500/10 text-blue-600 dark:text-blue-400'
           }`}>
             {isExpired ? 'Expired' : 'Active'}
-          </span>
+            </span>
         </div>
         <DeleteConfirmDialog
           title="Delete Share Code"

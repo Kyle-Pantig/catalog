@@ -45,7 +45,7 @@ export function DeleteConfirmDialog({
 
   const handleConfirm = () => {
     onConfirm()
-    setOpen(false)
+    // Don't auto-close - let the parent control when to close after deletion completes
   }
 
   const content = (

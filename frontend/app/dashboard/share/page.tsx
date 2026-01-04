@@ -200,7 +200,6 @@ export default function SharePage() {
 
 function ShareCodeItem({ code, onDelete, isDeleting }: { code: any; onDelete: () => void; isDeleting: boolean }) {
   const countdown = useCountdown(code.expiresAt)
-  const isUsed = !!code.usedAt
   const isExpired = code.expiresAt && new Date(code.expiresAt) < new Date()
   const [copiedCode, setCopiedCode] = useState(false)
   const [copiedLink, setCopiedLink] = useState(false)
@@ -222,15 +221,13 @@ function ShareCodeItem({ code, onDelete, isDeleting }: { code: any; onDelete: ()
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <code className="text-sm font-mono font-semibold">{code.code}</code>
-          {isUsed ? (
-            <span className="px-2 py-1 text-xs font-medium bg-green-500/10 text-green-600 dark:text-green-400 rounded">
-              Used
-            </span>
-          ) : (
-            <span className="px-2 py-1 text-xs font-medium bg-blue-500/10 text-blue-600 dark:text-blue-400 rounded">
-              Active
-            </span>
-          )}
+          <span className={`px-2 py-1 text-xs font-medium rounded ${
+            isExpired 
+              ? 'bg-red-500/10 text-red-600 dark:text-red-400' 
+              : 'bg-blue-500/10 text-blue-600 dark:text-blue-400'
+          }`}>
+            {isExpired ? 'Expired' : 'Active'}
+          </span>
         </div>
         <DeleteConfirmDialog
           title="Delete Share Code"
@@ -258,27 +255,13 @@ function ShareCodeItem({ code, onDelete, isDeleting }: { code: any; onDelete: ()
         </DeleteConfirmDialog>
       </div>
       
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
+      <div className="text-sm">
         <div className="flex items-center gap-2">
           <span className="text-muted-foreground">Expires:</span>
           <span className={isExpired ? 'text-destructive font-medium' : 'font-medium'}>
             {isExpired ? 'Expired' : countdown}
           </span>
         </div>
-        {isUsed && code.usedByIp && (
-          <div className="flex items-center gap-2">
-            <span className="text-muted-foreground">Used by IP:</span>
-            <span className="font-mono text-xs">{code.usedByIp}</span>
-          </div>
-        )}
-        {isUsed && code.usedAt && (
-          <div className="flex items-center gap-2">
-            <span className="text-muted-foreground">Used on:</span>
-            <span className="text-xs">
-              {new Date(code.usedAt).toLocaleString()}
-            </span>
-          </div>
-        )}
       </div>
 
       <div className="flex gap-2 pt-2 border-t">

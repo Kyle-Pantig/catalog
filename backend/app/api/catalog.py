@@ -404,21 +404,6 @@ async def view_catalog_by_code(code: str, request: Request):
                     pass  # Continue even if deactivation fails
                 raise HTTPException(status_code=403, detail="Code has expired")
         
-        # Check if code has already been used
-        if share_code.usedAt:
-            # Allow same IP to access again (in case of page refresh)
-            if share_code.usedByIp != client_ip:
-                raise HTTPException(status_code=403, detail="This share code has already been used")
-        else:
-            # Mark code as used with current IP (using Philippines time)
-            await prisma.sharecode.update(
-                where={"id": share_code.id},
-                data={
-                    "usedAt": get_ph_time_utc(),
-                    "usedByIp": client_ip
-                }
-            )
-        
         catalog = share_code.catalog
         
         return {

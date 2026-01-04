@@ -110,8 +110,6 @@ class ShareCodeResponse(BaseModel):
     code: str
     catalogId: str
     expiresAt: Optional[datetime]
-    usedAt: Optional[datetime] = None
-    usedByIp: Optional[str] = None
     isActive: bool
     createdAt: datetime
     

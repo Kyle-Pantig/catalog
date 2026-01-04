@@ -48,8 +48,6 @@ model ShareCode {
   catalogId  String
   catalog    Catalog   @relation(fields: [catalogId], references: [id], onDelete: Cascade)
   expiresAt  DateTime?
-  usedAt     DateTime?
-  usedByIp   String?
   isActive   Boolean   @default(true)
   createdAt  DateTime  @default(now())
 }

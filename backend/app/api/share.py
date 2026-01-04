@@ -97,9 +97,6 @@ async def validate_share_code(code: str):
             if expires_at < current_time:
                 return {"valid": False, "message": "Code has expired"}
         
-        if share_code.usedAt:
-            return {"valid": False, "message": "This share code has already been used"}
-        
         return {"valid": True, "catalogId": share_code.catalogId}
     except Exception as e:
         return {"valid": False, "message": f"Error validating code: {str(e)}"}

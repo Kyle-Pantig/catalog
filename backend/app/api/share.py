@@ -27,8 +27,8 @@ async def create_share_code(
         
         # Generate unique code
         code = generate_share_code()
-        # Ensure uniqueness
-        while await prisma.sharecode.find_unique(where={"code": code}):
+        # Ensure uniqueness - use count instead of find_unique for efficiency
+        while await prisma.sharecode.count(where={"code": code}) > 0:
             code = generate_share_code()
         
         # Always set expiration to exactly 24 hours from now (Philippines time)
@@ -56,7 +56,7 @@ async def delete_share_code(
 ):
     """Delete a share code (Owner only)"""
     try:
-        # Find share code
+        # Find share code with catalog for ownership check
         share_code = await prisma.sharecode.find_unique(
             where={"id": code_id},
             include={"catalog": True}

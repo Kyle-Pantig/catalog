@@ -6,8 +6,19 @@ from app.core.security import get_current_user
 from app.models.schemas import CatalogCreate, CatalogUpdate, CatalogResponse, CatalogWithItems, ItemCreate, ItemUpdate, ItemResponse, ReorderImagesRequest
 from app.utils.timezone import get_ph_time_utc
 from typing import List
+import asyncio
 
 router = APIRouter(prefix="/catalog", tags=["catalog"])
+
+
+async def verify_catalog_ownership(catalog_id: str, user_id: str) -> bool:
+    """Verify catalog ownership"""
+    catalog = await prisma.catalog.find_unique(where={"id": catalog_id})
+    if not catalog:
+        raise HTTPException(status_code=404, detail="Catalog not found")
+    if catalog.ownerId != user_id:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    return True
 
 
 @router.post("", response_model=CatalogResponse)
@@ -64,13 +75,8 @@ async def update_catalog(
 ):
     """Update a catalog (Owner only)"""
     try:
-        # Verify ownership
-        catalog = await prisma.catalog.find_unique(where={"id": catalog_id})
-        if not catalog:
-            raise HTTPException(status_code=404, detail="Catalog not found")
-        
-        if catalog.ownerId != current_user["id"]:
-            raise HTTPException(status_code=403, detail="Not authorized to update this catalog")
+        # Verify ownership with minimal query
+        await verify_catalog_ownership(catalog_id, current_user["id"])
         
         # Prepare update data (only include fields that are provided)
         update_data = {}
@@ -105,13 +111,8 @@ async def delete_catalog(
 ):
     """Delete a catalog (Owner only)"""
     try:
-        # Verify ownership
-        catalog = await prisma.catalog.find_unique(where={"id": catalog_id})
-        if not catalog:
-            raise HTTPException(status_code=404, detail="Catalog not found")
-        
-        if catalog.ownerId != current_user["id"]:
-            raise HTTPException(status_code=403, detail="Not authorized to delete this catalog")
+        # Verify ownership with minimal query
+        await verify_catalog_ownership(catalog_id, current_user["id"])
         
         # Delete catalog (cascade will delete items and share codes)
         await prisma.catalog.delete(where={"id": catalog_id})
@@ -131,13 +132,8 @@ async def create_item(
 ):
     """Add an item to a catalog (Owner only)"""
     try:
-        # Verify ownership
-        catalog = await prisma.catalog.find_unique(where={"id": catalog_id})
-        if not catalog:
-            raise HTTPException(status_code=404, detail="Catalog not found")
-        
-        if catalog.ownerId != current_user["id"]:
-            raise HTTPException(status_code=403, detail="Not authorized to add items to this catalog")
+        # Verify ownership with minimal query
+        await verify_catalog_ownership(catalog_id, current_user["id"])
         
         # Prepare specifications as JSON if provided
         specs_json = None
@@ -161,32 +157,22 @@ async def create_item(
             if vars_data:
                 variants_json = Json(vars_data)
         
-        # Create item
+        # Create item with images in a single transaction using nested create
+        image_data = []
+        if item.images:
+            image_data = [{"url": url, "order": idx} for idx, url in enumerate(item.images)]
+        
         new_item = await prisma.item.create(
             data={
-            "catalogId": catalog_id,
-            "name": item.name,
-            "description": item.description if item.description else None,
-            "specifications": specs_json,
-            "variants": variants_json
+                "catalogId": catalog_id,
+                "name": item.name,
+                "description": item.description if item.description else None,
+                "specifications": specs_json,
+                "variants": variants_json,
+                "images": {"create": image_data} if image_data else None
             },
-            include={"images": True}
+            include={"images": {"order_by": {"order": "asc"}}}
         )
-        
-        # Create images if provided
-        if item.images:
-            for idx, image_url in enumerate(item.images):
-                await prisma.itemimage.create(data={
-                    "itemId": new_item.id,
-                    "url": image_url,
-                    "order": idx
-                })
-            
-            # Refetch item with images
-            new_item = await prisma.item.find_unique(
-                where={"id": new_item.id},
-                include={"images": {"order_by": {"order": "asc"}}}
-            )
         
         return new_item
     except HTTPException:
@@ -208,12 +194,7 @@ async def update_item(
     """Update an item in a catalog (Owner only)"""
     try:
         # Verify ownership
-        catalog = await prisma.catalog.find_unique(where={"id": catalog_id})
-        if not catalog:
-            raise HTTPException(status_code=404, detail="Catalog not found")
-        
-        if catalog.ownerId != current_user["id"]:
-            raise HTTPException(status_code=403, detail="Not authorized to update items in this catalog")
+        await verify_catalog_ownership(catalog_id, current_user["id"])
         
         # Verify item exists and belongs to catalog
         item = await prisma.item.find_unique(where={"id": item_id})
@@ -227,11 +208,9 @@ async def update_item(
         if item_update.description is not None:
             update_data["description"] = item_update.description if item_update.description else None
         if item_update.specifications is not None:
-            # Convert to JSON - use Json wrapper for Prisma
             specs = [{"label": spec.label, "value": spec.value} for spec in item_update.specifications]
             update_data["specifications"] = Json(specs) if specs else Json(None)
         if item_update.variants is not None:
-            # Convert to JSON - use Json wrapper for Prisma
             vars_data = []
             for var in item_update.variants:
                 options_data = []
@@ -243,29 +222,19 @@ async def update_item(
                 vars_data.append({"name": var.name, "options": options_data})
             update_data["variants"] = Json(vars_data) if vars_data else Json(None)
         
-        # Update item if there are changes
-        if update_data:
-            await prisma.item.update(
-                where={"id": item_id},
-                data=update_data
-            )
-        
-        # Handle images update - replace all existing images
+        # Handle images - use nested operations for efficiency
         if item_update.images is not None:
-            # Delete existing images
-            await prisma.itemimage.delete_many(where={"itemId": item_id})
-            
-            # Create new images
-            for idx, image_url in enumerate(item_update.images):
-                await prisma.itemimage.create(data={
-                    "itemId": item_id,
-                    "url": image_url,
-                    "order": idx
-                })
+            image_data = [{"url": url, "order": idx} for idx, url in enumerate(item_update.images)]
+            # Delete all existing and create new in one update operation
+            update_data["images"] = {
+                "deleteMany": {},  # Delete all existing images
+                "create": image_data  # Create new images
+            }
         
-        # Fetch updated item with images
-        updated_item = await prisma.item.find_unique(
+        # Single update operation with all changes
+        updated_item = await prisma.item.update(
             where={"id": item_id},
+            data=update_data,
             include={"images": {"order_by": {"order": "asc"}}}
         )
         
@@ -288,12 +257,7 @@ async def delete_item(
     """Delete an item from a catalog (Owner only)"""
     try:
         # Verify ownership
-        catalog = await prisma.catalog.find_unique(where={"id": catalog_id})
-        if not catalog:
-            raise HTTPException(status_code=404, detail="Catalog not found")
-        
-        if catalog.ownerId != current_user["id"]:
-            raise HTTPException(status_code=403, detail="Not authorized to delete items from this catalog")
+        await verify_catalog_ownership(catalog_id, current_user["id"])
         
         # Verify item exists and belongs to catalog
         item = await prisma.item.find_unique(where={"id": item_id})
@@ -320,24 +284,22 @@ async def reorder_item_images(
     """Reorder images for an item (Owner only)"""
     try:
         # Verify ownership
-        catalog = await prisma.catalog.find_unique(where={"id": catalog_id})
-        if not catalog:
-            raise HTTPException(status_code=404, detail="Catalog not found")
-        
-        if catalog.ownerId != current_user["id"]:
-            raise HTTPException(status_code=403, detail="Not authorized to update items in this catalog")
+        await verify_catalog_ownership(catalog_id, current_user["id"])
         
         # Verify item exists and belongs to catalog
         item = await prisma.item.find_unique(where={"id": item_id})
         if not item or item.catalogId != catalog_id:
             raise HTTPException(status_code=404, detail="Item not found")
         
-        # Update order for each image
-        for image_order in reorder_request.images:
-            await prisma.itemimage.update(
+        # Update all image orders in parallel using asyncio.gather
+        update_tasks = [
+            prisma.itemimage.update(
                 where={"id": image_order.id},
                 data={"order": image_order.order}
             )
+            for image_order in reorder_request.images
+        ]
+        await asyncio.gather(*update_tasks)
         
         # Fetch updated item with images
         updated_item = await prisma.item.find_unique(

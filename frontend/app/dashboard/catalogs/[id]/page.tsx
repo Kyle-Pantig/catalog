@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useRef, useMemo } from 'react'
+import { useEffect, useState, useRef, useMemo, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
@@ -50,6 +50,7 @@ export default function CatalogDetailPage() {
   const [editVariants, setEditVariants] = useState<{ name: string; options: { value: string; specifications: { label: string; value: string }[] }[] }[]>([])
   const [editUploading, setEditUploading] = useState(false)
   const editFileInputRef = useRef<HTMLInputElement>(null)
+  const isUpdatingRef = useRef(false)
   
   // Initial state for change detection
   const [initialEditState, setInitialEditState] = useState<{
@@ -142,11 +143,15 @@ export default function CatalogDetailPage() {
       return data
     },
     onSuccess: () => {
+      isUpdatingRef.current = false
+      setEditUploading(false)
       queryClient.invalidateQueries({ queryKey: ['catalogs'] })
       handleCloseEdit()
       toast.success('Item updated successfully!')
     },
     onError: (error: Error) => {
+      isUpdatingRef.current = false
+      setEditUploading(false)
       toast.error(error.message)
     },
   })
@@ -274,6 +279,8 @@ export default function CatalogDetailPage() {
         URL.revokeObjectURL(img.url)
       }
     })
+    // Reset update ref
+    isUpdatingRef.current = false
     setEditOpen(false)
     setEditingItem(null)
     setEditName('')
@@ -331,77 +338,88 @@ export default function CatalogDetailPage() {
     setUploading(false)
   }
 
-  const handleEditItem = async () => {
+  const handleEditItem = useCallback(async () => {
     if (!editName || !editingItem) {
       toast.error('Item name is required')
       return
     }
 
-    setEditUploading(true)
-    
-    // Separate existing and new images, maintaining order
-    const existingUrls: string[] = []
-    const filesToUpload: File[] = []
-    const imageOrder: { type: 'existing' | 'new'; index: number }[] = []
-    
-    editImages.forEach(img => {
-      if (img.isNew && img.file) {
-        imageOrder.push({ type: 'new', index: filesToUpload.length })
-        filesToUpload.push(img.file)
-      } else if (!img.isNew) {
-        imageOrder.push({ type: 'existing', index: existingUrls.length })
-        existingUrls.push(img.url)
-      }
-    })
-
-    // Upload new images
-    let newUrls: string[] = []
-    if (filesToUpload.length > 0) {
-      const { urls, errors } = await uploadMultipleImages(filesToUpload, catalogId)
-      if (errors.length > 0) {
-        toast.error(`Failed to upload some images: ${errors[0].message}`)
-        console.error('Image upload errors:', errors)
-      }
-      newUrls = urls
+    // Prevent multiple calls - check all conditions first
+    if (isUpdatingRef.current || editUploading || updateItemMutation.isPending) {
+      return
     }
 
-    // Reconstruct final URL array in correct order
-    const finalUrls = imageOrder.map(item => {
-      if (item.type === 'existing') {
-        return existingUrls[item.index]
-      } else {
-        return newUrls[item.index]
-      }
-    }).filter(Boolean)
+    // Set ref immediately to prevent concurrent calls
+    isUpdatingRef.current = true
+    setEditUploading(true)
+    
+    try {
+      // Separate existing and new images, maintaining order
+      const existingUrls: string[] = []
+      const filesToUpload: File[] = []
+      const imageOrder: { type: 'existing' | 'new'; index: number }[] = []
+      
+      editImages.forEach(img => {
+        if (img.isNew && img.file) {
+          imageOrder.push({ type: 'new', index: filesToUpload.length })
+          filesToUpload.push(img.file)
+        } else if (!img.isNew) {
+          imageOrder.push({ type: 'existing', index: existingUrls.length })
+          existingUrls.push(img.url)
+        }
+      })
 
-    // Filter out empty specifications
-    const validSpecs = editSpecifications.filter(s => s.label.trim() && s.value.trim())
-    
-    // Filter out empty variants and their options
-    const validVariants = editVariants
-      .map(v => ({
-        name: v.name.trim(),
-        options: v.options
-          .filter(o => o.value.trim())
-          .map(o => ({
-            value: o.value.trim(),
-            specifications: o.specifications?.filter(s => s.label.trim() && s.value.trim())
-          }))
-      }))
-      .filter(v => v.name && v.options.length > 0)
-    
-    updateItemMutation.mutate({
-      itemId: editingItem.id,
-      itemData: {
-        name: editName,
-        description: editDescription.trim() || undefined,
-        images: finalUrls,
-        specifications: validSpecs,
-        variants: validVariants,
-      },
-    })
-    setEditUploading(false)
-  }
+      // Upload new images
+      let newUrls: string[] = []
+      if (filesToUpload.length > 0) {
+        const { urls, errors } = await uploadMultipleImages(filesToUpload, catalogId)
+        if (errors.length > 0) {
+          toast.error(`Failed to upload some images: ${errors[0].message}`)
+          console.error('Image upload errors:', errors)
+        }
+        newUrls = urls
+      }
+
+      // Reconstruct final URL array in correct order
+      const finalUrls = imageOrder.map(item => {
+        if (item.type === 'existing') {
+          return existingUrls[item.index]
+        } else {
+          return newUrls[item.index]
+        }
+      }).filter(Boolean)
+
+      // Filter out empty specifications
+      const validSpecs = editSpecifications.filter(s => s.label.trim() && s.value.trim())
+      
+      // Filter out empty variants and their options
+      const validVariants = editVariants
+        .map(v => ({
+          name: v.name.trim(),
+          options: v.options
+            .filter(o => o.value.trim())
+            .map(o => ({
+              value: o.value.trim(),
+              specifications: o.specifications?.filter(s => s.label.trim() && s.value.trim())
+            }))
+        }))
+        .filter(v => v.name && v.options.length > 0)
+      
+      updateItemMutation.mutate({
+        itemId: editingItem.id,
+        itemData: {
+          name: editName,
+          description: editDescription.trim() || undefined,
+          images: finalUrls,
+          specifications: validSpecs,
+          variants: validVariants,
+        },
+      })
+    } catch (error) {
+      isUpdatingRef.current = false
+      setEditUploading(false)
+    }
+  }, [editName, editingItem, editImages, editDescription, editSpecifications, editVariants, catalogId, editUploading, updateItemMutation])
 
   const handleOpenEdit = (item: any) => {
     const imageIds = item.images?.map((img: any) => img.id) || []
@@ -536,7 +554,7 @@ export default function CatalogDetailPage() {
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
                     placeholder="Item description"
-                    className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
                   />
                 </div>
                 {/* Hide specifications when variants are added - each variant option has its own specs */}
@@ -548,18 +566,19 @@ export default function CatalogDetailPage() {
                       </label>
                       <Button
                         type="button"
-                        variant="outline"
+                        variant="ghost"
                         size="sm"
+                        className="h-7 text-xs"
                         onClick={() => setSpecifications([...specifications, { label: '', value: '' }])}
                       >
-                        <svg className="w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <svg className="w-3 h-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
                         </svg>
                         Add Spec
                       </Button>
                     </div>
                     {specifications.map((spec, index) => (
-                      <div key={index} className="flex gap-2">
+                      <div key={index} className="flex rounded-md border border-input overflow-hidden">
                         <Input
                           value={spec.label}
                           onChange={(e) => {
@@ -567,9 +586,10 @@ export default function CatalogDetailPage() {
                             newSpecs[index].label = e.target.value
                             setSpecifications(newSpecs)
                           }}
-                          placeholder="Label (e.g. Size)"
-                          className="flex-1"
+                          placeholder="Label"
+                          className="flex-1 border-0 rounded-none focus-visible:ring-0"
                         />
+                        <div className="w-px bg-input" />
                         <Input
                           value={spec.value}
                           onChange={(e) => {
@@ -577,13 +597,15 @@ export default function CatalogDetailPage() {
                             newSpecs[index].value = e.target.value
                             setSpecifications(newSpecs)
                           }}
-                          placeholder="Value (e.g. Large)"
-                          className="flex-1"
+                          placeholder="Value"
+                          className="flex-1 border-0 rounded-none focus-visible:ring-0"
                         />
+                        <div className="w-px bg-input self-stretch" />
                         <Button
                           type="button"
                           variant="ghost"
                           size="icon"
+                          className="rounded-none flex-shrink-0 hover:bg-destructive/10"
                           onClick={() => setSpecifications(specifications.filter((_, i) => i !== index))}
                         >
                           <svg className="w-4 h-4 text-destructive" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -603,11 +625,12 @@ export default function CatalogDetailPage() {
                       </label>
                       <Button
                         type="button"
-                        variant="outline"
+                        variant="ghost"
                         size="sm"
+                        className="h-7 text-xs"
                         onClick={() => setVariants([...variants, { name: '', options: [{ value: '', specifications: [] }] }])}
                       >
-                        <svg className="w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <svg className="w-3 h-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
                         </svg>
                         Add Variant
@@ -616,7 +639,7 @@ export default function CatalogDetailPage() {
                     <p className="text-xs text-muted-foreground">Add product variants like Size, Color, or Material with multiple options.</p>
                   {variants.map((variant, vIndex) => (
                     <div key={vIndex} className="border rounded-lg p-3 space-y-2">
-                      <div className="flex gap-2">
+                      <div className="flex rounded-md border border-input overflow-hidden">
                         <Input
                           value={variant.name}
                           onChange={(e) => {
@@ -625,12 +648,14 @@ export default function CatalogDetailPage() {
                             setVariants(newVariants)
                           }}
                           placeholder="Variant name (e.g. Size, Color)"
-                          className="flex-1"
+                          className="flex-1 border-0 rounded-none focus-visible:ring-0"
                         />
+                        <div className="w-px bg-input self-stretch" />
                         <Button
                           type="button"
                           variant="ghost"
                           size="icon"
+                          className="rounded-none flex-shrink-0 hover:bg-destructive/10"
                           onClick={() => setVariants(variants.filter((_, i) => i !== vIndex))}
                         >
                           <svg className="w-4 h-4 text-destructive" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -642,7 +667,7 @@ export default function CatalogDetailPage() {
                         <label className="text-xs text-muted-foreground">Options (each option can have its own specifications)</label>
                         {variant.options.map((option, oIndex) => (
                           <div key={oIndex} className="border rounded-md p-2 space-y-2 bg-muted/30">
-                            <div className="flex gap-2">
+                            <div className="flex rounded-md border border-input overflow-hidden">
                               <Input
                                 value={option.value}
                                 onChange={(e) => {
@@ -651,12 +676,14 @@ export default function CatalogDetailPage() {
                                   setVariants(newVariants)
                                 }}
                                 placeholder={`Option ${oIndex + 1} (e.g. Small, Red)`}
-                                className="flex-1"
+                                className="flex-1 border-0 rounded-none focus-visible:ring-0"
                               />
+                              <div className="w-px bg-input self-stretch" />
                               <Button
                                 type="button"
                                 variant="ghost"
                                 size="icon"
+                                className="rounded-none flex-shrink-0 hover:bg-muted"
                                 onClick={() => {
                                   const newVariants = [...variants]
                                   newVariants[vIndex].options = newVariants[vIndex].options.filter((_, i) => i !== oIndex)
@@ -691,7 +718,7 @@ export default function CatalogDetailPage() {
                                 </Button>
                               </div>
                               {option.specifications.map((spec, sIndex) => (
-                                <div key={sIndex} className="flex gap-1">
+                                <div key={sIndex} className="flex rounded-md border border-input overflow-hidden">
                                   <Input
                                     value={spec.label}
                                     onChange={(e) => {
@@ -700,8 +727,9 @@ export default function CatalogDetailPage() {
                                       setVariants(newVariants)
                                     }}
                                     placeholder="Label"
-                                    className="flex-1 h-8 text-xs"
+                                    className="flex-1 h-8 text-xs border-0 rounded-none focus-visible:ring-0"
                                   />
+                                  <div className="w-px bg-input" />
                                   <Input
                                     value={spec.value}
                                     onChange={(e) => {
@@ -710,13 +738,14 @@ export default function CatalogDetailPage() {
                                       setVariants(newVariants)
                                     }}
                                     placeholder="Value"
-                                    className="flex-1 h-8 text-xs"
+                                    className="flex-1 h-8 text-xs border-0 rounded-none focus-visible:ring-0"
                                   />
+                                  <div className="w-px bg-input self-stretch" />
                                   <Button
                                     type="button"
                                     variant="ghost"
                                     size="icon"
-                                    className="h-8 w-8"
+                                    className="h-8 w-8 rounded-none flex-shrink-0 hover:bg-destructive/10"
                                     onClick={() => {
                                       const newVariants = [...variants]
                                       newVariants[vIndex].options[oIndex].specifications = 
@@ -824,7 +853,8 @@ export default function CatalogDetailPage() {
                   onChange={(e) => setEditName(e.target.value)}
                   placeholder="Item name"
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter' && editName && !editUploading && !updateItemMutation.isPending) {
+                    if (e.key === 'Enter' && editName && !editUploading && !updateItemMutation.isPending && !isUpdatingRef.current) {
+                      e.preventDefault()
                       handleEditItem()
                     }
                   }}
@@ -839,7 +869,7 @@ export default function CatalogDetailPage() {
                   value={editDescription}
                   onChange={(e) => setEditDescription(e.target.value)}
                   placeholder="Item description"
-                  className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
                 />
               </div>
               {/* Hide specifications when variants are added - each variant option has its own specs */}
@@ -851,18 +881,19 @@ export default function CatalogDetailPage() {
                     </label>
                     <Button
                       type="button"
-                      variant="outline"
+                      variant="ghost"
                       size="sm"
+                      className="h-7 text-xs"
                       onClick={() => setEditSpecifications([...editSpecifications, { label: '', value: '' }])}
                     >
-                      <svg className="w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <svg className="w-3 h-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
                       </svg>
                       Add Spec
                     </Button>
                   </div>
                   {editSpecifications.map((spec, index) => (
-                    <div key={index} className="flex gap-2">
+                    <div key={index} className="flex rounded-md border border-input overflow-hidden">
                       <Input
                         value={spec.label}
                         onChange={(e) => {
@@ -870,9 +901,10 @@ export default function CatalogDetailPage() {
                           newSpecs[index].label = e.target.value
                           setEditSpecifications(newSpecs)
                         }}
-                        placeholder="Label (e.g. Size)"
-                        className="flex-1"
+                        placeholder="Label"
+                        className="flex-1 border-0 rounded-none focus-visible:ring-0"
                       />
+                      <div className="w-px bg-input" />
                       <Input
                         value={spec.value}
                         onChange={(e) => {
@@ -880,13 +912,15 @@ export default function CatalogDetailPage() {
                           newSpecs[index].value = e.target.value
                           setEditSpecifications(newSpecs)
                         }}
-                        placeholder="Value (e.g. Large)"
-                        className="flex-1"
+                        placeholder="Value"
+                        className="flex-1 border-0 rounded-none focus-visible:ring-0"
                       />
+                      <div className="w-px bg-input self-stretch" />
                       <Button
                         type="button"
                         variant="ghost"
                         size="icon"
+                        className="rounded-none flex-shrink-0 hover:bg-destructive/10"
                         onClick={() => setEditSpecifications(editSpecifications.filter((_, i) => i !== index))}
                       >
                         <svg className="w-4 h-4 text-destructive" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -906,11 +940,12 @@ export default function CatalogDetailPage() {
                     </label>
                     <Button
                       type="button"
-                      variant="outline"
+                      variant="ghost"
                       size="sm"
+                      className="h-7 text-xs"
                       onClick={() => setEditVariants([...editVariants, { name: '', options: [{ value: '', specifications: [] }] }])}
                     >
-                      <svg className="w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <svg className="w-3 h-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
                       </svg>
                       Add Variant
@@ -919,7 +954,7 @@ export default function CatalogDetailPage() {
                   <p className="text-xs text-muted-foreground">Add product variants like Size, Color, or Material with multiple options.</p>
                 {editVariants.map((variant, vIndex) => (
                   <div key={vIndex} className="border rounded-lg p-3 space-y-2">
-                    <div className="flex gap-2">
+                    <div className="flex rounded-md border border-input overflow-hidden">
                       <Input
                         value={variant.name}
                         onChange={(e) => {
@@ -928,12 +963,14 @@ export default function CatalogDetailPage() {
                           setEditVariants(newVariants)
                         }}
                         placeholder="Variant name (e.g. Size, Color)"
-                        className="flex-1"
+                        className="flex-1 border-0 rounded-none focus-visible:ring-0"
                       />
+                      <div className="w-px bg-input self-stretch" />
                       <Button
                         type="button"
                         variant="ghost"
                         size="icon"
+                        className="rounded-none flex-shrink-0 hover:bg-destructive/10"
                         onClick={() => setEditVariants(editVariants.filter((_, i) => i !== vIndex))}
                       >
                         <svg className="w-4 h-4 text-destructive" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -945,7 +982,7 @@ export default function CatalogDetailPage() {
                       <label className="text-xs text-muted-foreground">Options (each option can have its own specifications)</label>
                       {variant.options.map((option, oIndex) => (
                         <div key={oIndex} className="border rounded-md p-2 space-y-2 bg-muted/30">
-                          <div className="flex gap-2">
+                          <div className="flex rounded-md border border-input overflow-hidden">
                             <Input
                               value={option.value}
                               onChange={(e) => {
@@ -954,12 +991,14 @@ export default function CatalogDetailPage() {
                                 setEditVariants(newVariants)
                               }}
                               placeholder={`Option ${oIndex + 1} (e.g. Small, Red)`}
-                              className="flex-1"
+                              className="flex-1 border-0 rounded-none focus-visible:ring-0"
                             />
+                            <div className="w-px bg-input self-stretch" />
                             <Button
                               type="button"
                               variant="ghost"
                               size="icon"
+                              className="rounded-none flex-shrink-0 hover:bg-muted"
                               onClick={() => {
                                 const newVariants = [...editVariants]
                                 newVariants[vIndex].options = newVariants[vIndex].options.filter((_, i) => i !== oIndex)
@@ -994,7 +1033,7 @@ export default function CatalogDetailPage() {
                               </Button>
                             </div>
                             {option.specifications.map((spec, sIndex) => (
-                              <div key={sIndex} className="flex gap-1">
+                              <div key={sIndex} className="flex rounded-md border border-input overflow-hidden">
                                 <Input
                                   value={spec.label}
                                   onChange={(e) => {
@@ -1003,8 +1042,9 @@ export default function CatalogDetailPage() {
                                     setEditVariants(newVariants)
                                   }}
                                   placeholder="Label"
-                                  className="flex-1 h-8 text-xs"
+                                  className="flex-1 h-8 text-xs border-0 rounded-none focus-visible:ring-0"
                                 />
+                                <div className="w-px bg-input" />
                                 <Input
                                   value={spec.value}
                                   onChange={(e) => {
@@ -1013,13 +1053,14 @@ export default function CatalogDetailPage() {
                                     setEditVariants(newVariants)
                                   }}
                                   placeholder="Value"
-                                  className="flex-1 h-8 text-xs"
+                                  className="flex-1 h-8 text-xs border-0 rounded-none focus-visible:ring-0"
                                 />
+                                <div className="w-px bg-input self-stretch" />
                                 <Button
                                   type="button"
                                   variant="ghost"
                                   size="icon"
-                                  className="h-8 w-8"
+                                  className="h-8 w-8 rounded-none flex-shrink-0 hover:bg-destructive/10"
                                   onClick={() => {
                                     const newVariants = [...editVariants]
                                     newVariants[vIndex].options[oIndex].specifications = 
@@ -1096,8 +1137,12 @@ export default function CatalogDetailPage() {
                 Cancel
               </Button>
               <Button
-                onClick={handleEditItem}
-                disabled={!editName || !hasEditChanges || editUploading || updateItemMutation.isPending}
+                onClick={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  handleEditItem()
+                }}
+                disabled={!editName || !hasEditChanges || editUploading || updateItemMutation.isPending || isUpdatingRef.current}
               >
                 {editUploading || updateItemMutation.isPending ? 'Updating...' : 'Update Item'}
               </Button>

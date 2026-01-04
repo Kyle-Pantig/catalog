@@ -19,6 +19,8 @@ import { supabase } from '@/lib/supabase'
 export default function SharePage() {
   const router = useRouter()
   const queryClient = useQueryClient()
+  const [generatingCatalogId, setGeneratingCatalogId] = useState<string | null>(null)
+  const [deletingCodeId, setDeletingCodeId] = useState<string | null>(null)
 
   useEffect(() => {
     const checkAuth = async () => {
@@ -47,9 +49,11 @@ export default function SharePage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['catalogs'] })
+      setGeneratingCatalogId(null)
       toast.success('Share code created successfully!')
     },
     onError: (error: Error) => {
+      setGeneratingCatalogId(null)
       toast.error(error.message)
     },
   })
@@ -62,9 +66,11 @@ export default function SharePage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['catalogs'] })
+      setDeletingCodeId(null)
       toast.success('Share code deleted successfully!')
     },
     onError: (error: Error) => {
+      setDeletingCodeId(null)
       toast.error(error.message)
     },
   })
@@ -142,10 +148,13 @@ export default function SharePage() {
                       </div>
                     </div>
                     <Button
-                      onClick={() => createShareCodeMutation.mutate(catalog.id)}
-                      disabled={createShareCodeMutation.isPending}
+                      onClick={() => {
+                        setGeneratingCatalogId(catalog.id)
+                        createShareCodeMutation.mutate(catalog.id)
+                      }}
+                      disabled={generatingCatalogId === catalog.id && createShareCodeMutation.isPending}
                     >
-                      {createShareCodeMutation.isPending ? 'Generating...' : 'Generate Code'}
+                      {generatingCatalogId === catalog.id && createShareCodeMutation.isPending ? 'Generating...' : 'Generate Code'}
                     </Button>
                   </div>
                 </CardHeader>
@@ -158,8 +167,11 @@ export default function SharePage() {
                           <ShareCodeItem
                             key={code.id}
                             code={code}
-                            onDelete={() => deleteShareCodeMutation.mutate(code.id)}
-                            isDeleting={deleteShareCodeMutation.isPending}
+                            onDelete={() => {
+                              setDeletingCodeId(code.id)
+                              deleteShareCodeMutation.mutate(code.id)
+                            }}
+                            isDeleting={deletingCodeId === code.id && deleteShareCodeMutation.isPending}
                           />
                         ))}
                       </div>

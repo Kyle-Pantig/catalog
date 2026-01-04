@@ -49,7 +49,7 @@ export default function CatalogsPage() {
     const checkAuth = async () => {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) {
-        router.push('/login')
+      router.push('/login')
       }
     }
     checkAuth()

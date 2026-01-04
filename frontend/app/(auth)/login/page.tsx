@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
 import { Button } from '@/components/ui/button'
@@ -14,6 +14,31 @@ export default function LoginPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
+  const [checkingAuth, setCheckingAuth] = useState(true)
+
+  // Redirect if already authenticated
+  useEffect(() => {
+    const checkAuth = async () => {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (session) {
+        router.push('/dashboard')
+      } else {
+        setCheckingAuth(false)
+      }
+    }
+
+    checkAuth()
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session) {
+        router.push('/dashboard')
+      } else {
+        setCheckingAuth(false)
+      }
+    })
+
+    return () => subscription.unsubscribe()
+  }, [router])
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -35,6 +60,30 @@ export default function LoginPage() {
       toast.success('Login successful!')
       router.push('/dashboard')
     }
+  }
+
+  // Show loading state while checking authentication
+  if (checkingAuth) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background p-4">
+        <Card className="w-full max-w-md">
+          <CardHeader className="space-y-4">
+            <div className="flex justify-center mb-2">
+              <Image
+                src="/catalink-logo.png"
+                alt="Catalink Logo"
+                width={120}
+                height={40}
+                className="h-10 w-auto object-contain"
+              />
+            </div>
+            <div className="flex items-center justify-center py-4">
+              <div className="text-muted-foreground">Loading...</div>
+            </div>
+          </CardHeader>
+        </Card>
+      </div>
+    )
   }
 
   return (

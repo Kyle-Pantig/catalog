@@ -1,9 +1,32 @@
+'use client'
+
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { supabase } from '@/lib/supabase'
 
 export default function Home() {
+  const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    const checkAuth = async () => {
+      const { data: { session } } = await supabase.auth.getSession()
+      setIsAuthenticated(!!session)
+      setLoading(false)
+    }
+
+    checkAuth()
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setIsAuthenticated(!!session)
+    })
+
+    return () => subscription.unsubscribe()
+  }, [])
+
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-4 bg-gradient-to-br from-background via-background to-muted/20">
       <div className="max-w-4xl w-full space-y-12 text-center">
@@ -37,9 +60,17 @@ export default function Home() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <Link href="/login">
-                <Button className="w-full" size="lg">Sign In</Button>
-              </Link>
+              {loading ? (
+                <Button className="w-full" size="lg" disabled>Loading...</Button>
+              ) : isAuthenticated ? (
+                <Link href="/dashboard">
+                  <Button className="w-full" size="lg">Dashboard</Button>
+                </Link>
+              ) : (
+                <Link href="/login">
+                  <Button className="w-full" size="lg">Sign In</Button>
+                </Link>
+              )}
             </CardContent>
           </Card>
 

@@ -20,6 +20,9 @@ model Catalog {
   items       Item[]
   shareCodes  ShareCode[]
   createdAt   DateTime    @default(now())
+
+  @@index([ownerId])           // Fast lookup for user's catalogs
+  @@index([createdAt(sort: Desc)]) // Fast sorting by creation date
 }
 
 model Item {
@@ -32,6 +35,9 @@ model Item {
   variants       Json?       // Variants like [{name: "Size", options: ["S", "M", "L"]}, {name: "Color", options: ["Red", "Blue"]}]
   images         ItemImage[]
   createdAt      DateTime    @default(now())
+
+  @@index([catalogId])            // Fast lookup for catalog's items
+  @@index([catalogId, createdAt(sort: Desc)]) // Fast sorted lookup within catalog
 }
 
 model ItemImage {
@@ -42,6 +48,8 @@ model ItemImage {
   order          Int      @default(0)
   variantOptions Json?    // Stores variant option associations like {"Color": "Red", "Size": "M"}
   createdAt      DateTime @default(now())
+
+  @@index([itemId, order])  // Fast ordered lookup for item's images
 }
 
 model ShareCode {
@@ -52,5 +60,9 @@ model ShareCode {
   expiresAt  DateTime?
   isActive   Boolean   @default(true)
   createdAt  DateTime  @default(now())
+
+  @@index([catalogId])              // Fast lookup for catalog's share codes
+  @@index([code, isActive])         // Fast active code validation
+  @@index([isActive, expiresAt])    // Fast filtering of active non-expired codes
 }
 

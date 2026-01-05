@@ -18,6 +18,7 @@ import {
   ChartTooltipContent,
   type ChartConfig,
 } from "@/components/ui/chart"
+import { Skeleton } from "@/components/ui/skeleton"
 
 type CatalogsPieChartProps = {
   catalogs: Array<{
@@ -59,6 +60,12 @@ const generateChartConfig = (catalogs: CatalogsPieChartProps["catalogs"]): Chart
 }
 
 export function CatalogsPieChart({ catalogs }: CatalogsPieChartProps) {
+  const [mounted, setMounted] = React.useState(false)
+
+  React.useEffect(() => {
+    setMounted(true)
+  }, [])
+
   const chartData = React.useMemo(() => {
     if (!catalogs || catalogs.length === 0) return []
 
@@ -110,6 +117,29 @@ export function CatalogsPieChart({ catalogs }: CatalogsPieChartProps) {
           <CardTitle>Items Distribution</CardTitle>
           <CardDescription>No items found in your catalogs</CardDescription>
         </CardHeader>
+      </Card>
+    )
+  }
+
+  // Show skeleton during SSR to avoid Recharts dimension warnings
+  if (!mounted) {
+    return (
+      <Card className="flex flex-col">
+        <CardHeader className="items-center pb-0">
+          <CardTitle>Items Distribution</CardTitle>
+          <CardDescription>Items count per catalog</CardDescription>
+        </CardHeader>
+        <CardContent className="flex-1 pb-0">
+          <Skeleton className="mx-auto aspect-square max-h-[250px] w-full rounded-full" />
+        </CardContent>
+        <CardFooter className="flex-col gap-2 text-sm">
+          <div className="flex items-center gap-2 leading-none font-medium">
+            Total items: {totalItems.toLocaleString()} <TrendingUp className="h-4 w-4" />
+          </div>
+          <div className="text-muted-foreground leading-none">
+            Showing distribution across {chartData.length} catalog{chartData.length !== 1 ? 's' : ''}
+          </div>
+        </CardFooter>
       </Card>
     )
   }

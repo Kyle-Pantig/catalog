@@ -15,6 +15,7 @@ import {
   ChartTooltipContent,
   type ChartConfig,
 } from "@/components/ui/chart"
+import { Skeleton } from "@/components/ui/skeleton"
 
 type CatalogsChartProps = {
   catalogs: Array<{
@@ -32,6 +33,12 @@ const chartConfig = {
 } satisfies ChartConfig
 
 export function CatalogsChart({ catalogs }: CatalogsChartProps) {
+  const [mounted, setMounted] = React.useState(false)
+
+  React.useEffect(() => {
+    setMounted(true)
+  }, [])
+
   const chartData = React.useMemo(() => {
     if (!catalogs || catalogs.length === 0) return []
     return catalogs.map((catalog) => ({
@@ -56,6 +63,29 @@ export function CatalogsChart({ catalogs }: CatalogsChartProps) {
             No catalogs available. Create your first catalog to see the chart.
           </CardDescription>
         </CardHeader>
+      </Card>
+    )
+  }
+
+  // Show skeleton during SSR to avoid Recharts dimension warnings
+  if (!mounted) {
+    return (
+      <Card>
+        <CardHeader className="flex flex-col items-stretch border-b !p-0 sm:flex-row">
+          <div className="flex flex-1 flex-col justify-center gap-1 px-6 pt-4 pb-3 sm:!py-0">
+            <CardTitle>Catalogs Overview</CardTitle>
+            <CardDescription>Number of items in each catalog</CardDescription>
+          </div>
+          <div className="flex">
+            <div className="relative z-30 flex flex-1 flex-col justify-center gap-1 border-t px-6 py-4 text-left sm:border-t-0 sm:border-l sm:px-8 sm:py-6">
+              <span className="text-muted-foreground text-xs">{chartConfig.items.label}</span>
+              <span className="text-lg leading-none font-bold sm:text-3xl">{totalItems.toLocaleString()}</span>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="px-2 sm:p-6">
+          <Skeleton className="h-[250px] w-full" />
+        </CardContent>
       </Card>
     )
   }
